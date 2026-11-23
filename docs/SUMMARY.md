@@ -103,8 +103,8 @@ same three years and `--fixture` serves everything offline.
 where share counts are missing, which is most TWSE names.
 
 **Fixture and full-panel results differ, and one preset changes sign.** The committed
-fixture screens a 150-name universe; the full fetch uses 300. 12-1 momentum nets +0.21 on
-the first and −0.03 on the second. Nothing about the strategy changed — only how many
+fixture screens a 150-name universe; the full fetch uses 300. 12-1 momentum nets +0.13 on
+the first and −0.07 on the second. Nothing about the strategy changed — only how many
 names it could choose from, which is itself the clearest evidence that a marginal result
 over three years should not be believed. The README tabulates both.
 
@@ -117,7 +117,7 @@ size-dependence. It prices one contract or one unit of notional.
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest                    # 290 tests, no network needed
+pytest                    # 293 tests, no network needed
 twbt web --fixture        # -> http://127.0.0.1:8000
 ```
 

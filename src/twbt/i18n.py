@@ -269,6 +269,8 @@ VERDICT: dict[str, dict[str, str]] = {
                      "zh": "沒有部位建構步驟（LongShortBalance / GrossScale / TopN）。引擎仍會自行標準化，但得到的部位不是你指定的那個。"},
     "rank_demean":  {"en": "Demean after Rank re-centres an already-uniform distribution, which mostly just shifts it by 0.5.",
                      "zh": "在 Rank 之後再 Demean，等於把已經均勻的分布再置中，實際上只是平移 0.5。"},
+    "lsb_uncentred": {"en": "LongShortBalance follows {op}, which is never negative, so there is nothing to short — this is a long-only book with net +0.5. Insert Demean before it.",
+                      "zh": "LongShortBalance 接在 {op} 之後，而 {op} 不會產生負值，等於沒有空方——這是淨多 +0.5 的純多單部位。請在之前加入 Demean。"},
     "double_gross": {"en": "GrossScale more than once: all but the last are discarded.",
                      "zh": "重複使用 GrossScale：除了最後一次以外都會被覆蓋。"},
 }

@@ -31,9 +31,9 @@ from . import charts
 # verdict attached -- including the fact that it loses money after costs.
 EXAMPLE = {
     "name": "12-1 momentum",
-    "expression": ("GrossScale(LongShortBalance(Rank(\n"
+    "expression": ("GrossScale(LongShortBalance(Demean(Rank(\n"
                    "    InstSum(231, LogReturns(Lag(21, px)))\n"
-                   ")))"),
+                   "))))"),
 }
 
 

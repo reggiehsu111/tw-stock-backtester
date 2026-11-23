@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from twbt import ops
+from twbt import ops, panel as pm
 
 IDX = pd.bdate_range("2023-01-02", periods=400)
 COLS = [f"{i:04d}" for i in range(1101, 1161)]
@@ -253,8 +253,10 @@ def test_apply_op_handles_both_argument_orders():
 
 def test_a_full_pipeline_composes_to_a_neutral_scaled_book():
     px = _px()
+    # Demean before LongShortBalance: the latter does not centre, and Rank is
+    # never negative, so without it the book is long-only with net +0.5.
     sig = ops.GrossScale(ops.LongShortBalance(
-        ops.Rank(ops.Demean(ops.InstRank(20, ops.Returns(px))))))
+        ops.Demean(ops.Rank(ops.InstRank(20, ops.Returns(px))))))
     g = sig.abs().sum(axis=1)
     assert g[g > 0].sub(1.0).abs().max() < 1e-9
     assert sig.sum(axis=1).abs().max() < 1e-9
@@ -264,11 +266,9 @@ def test_a_full_pipeline_composes_to_a_neutral_scaled_book():
 # normalisation is a choice, and the choices genuinely differ
 # --------------------------------------------------------------------------- #
 
-@pytest.mark.parametrize("method", sorted(__import__("twbt").panel.NORMALISATIONS))
+@pytest.mark.parametrize("method", sorted(pm.NORMALISATIONS))
 def test_every_normalisation_is_trailing_only(method):
     """The same adversarial test the panel functions get, via normalize()."""
-    from twbt import panel as pm
-
     idx = pd.bdate_range("2023-01-02", periods=500)
     rng = np.random.default_rng(4)
     s = pd.Series(rng.normal(0, 100, 500), index=idx)
@@ -291,8 +291,6 @@ def test_rank_and_zscore_disagree_on_skewed_data():
     On a lognormal series with one large outlier they correlate at about 0.13,
     which is the whole argument for making the method a parameter.
     """
-    from twbt import panel as pm
-
     idx = pd.bdate_range("2023-01-02", periods=600)
     s = pd.Series(np.random.default_rng(0).lognormal(0, 1, 600), index=idx)
     s.iloc[300] = 500
@@ -302,7 +300,6 @@ def test_rank_and_zscore_disagree_on_skewed_data():
 
 
 def test_unknown_normalisation_is_refused():
-    from twbt import panel as pm
     with pytest.raises(ValueError, match="unknown normalisation"):
         pm.normalize(pd.Series([1.0, 2.0]), "banana")
 
@@ -316,3 +313,62 @@ def test_logreturns_blanks_non_positive_ratios_rather_than_warning():
     assert np.isnan(out.iloc[2, 0])          # ratio 0  -> blank
     assert np.isnan(out.iloc[3, 0])          # divide by 0 -> blank
     assert out.iloc[1, 0] == pytest.approx(np.log(0.5))
+
+
+# --------------------------------------------------------------------------- #
+# the properties that were verified against the reference implementation
+#
+# The operator vocabulary here mirrors a research framework I use elsewhere.
+# Comparing the two on identical input found three differences, two cosmetic and
+# one real; these tests pin the agreed behaviour so it cannot drift back.
+# --------------------------------------------------------------------------- #
+
+def test_longshortbalance_sets_the_level_not_just_the_centre():
+    """The real difference found by comparison.
+
+    This was once byte-identical to Demean — two registry entries doing the same
+    thing, and the name promising something neither delivered. Subtracting the
+    mean equalises the two sides but leaves gross varying row to row with the
+    dispersion of the signal, so the P&L mixes the view with how big the bet was.
+    """
+    idx = pd.bdate_range("2024-01-02", periods=20)
+    rng = np.random.default_rng(0)
+    mx = pd.DataFrame(rng.normal(0, 1, (20, 10)), index=idx,
+                      columns=list("abcdefghij"))
+
+    out = ops.LongShortBalance(mx)
+    assert out.clip(lower=0).sum(axis=1).sub(0.5).abs().max() < 1e-12
+    assert (-out.clip(upper=0)).sum(axis=1).sub(0.5).abs().max() < 1e-12
+    assert out.sum(axis=1).abs().max() < 1e-12          # dollar-neutral
+    assert out.abs().sum(axis=1).sub(1.0).abs().max() < 1e-12   # unit gross
+
+    # and it is no longer the same function as Demean
+    assert not out.equals(ops.Demean(mx))
+
+
+def test_longshortbalance_on_a_non_negative_input_is_long_only():
+    """The footgun this behaviour creates, asserted so the warning stays earned.
+
+    Rank is never negative, so there is nothing to short and the result is a
+    long-only book with net +0.5. That is correct for the operator and wrong for
+    the pipeline, which is why `pipeline.warnings()` flags the combination.
+    """
+    idx = pd.bdate_range("2024-01-02", periods=10)
+    ranks = pd.DataFrame(np.linspace(0, 1, 50).reshape(10, 5), index=idx,
+                         columns=list("abcde"))
+    out = ops.LongShortBalance(ranks)
+    assert out.sum(axis=1).sub(0.5).abs().max() < 1e-9
+    assert (out >= 0).all().all()
+
+
+def test_trailing_statistics_share_one_min_periods_rule():
+    """"Window 20" must mean the same warm-up across the whole operator set."""
+    idx = pd.bdate_range("2024-01-02", periods=60)
+    s = pd.DataFrame({"a": np.arange(60, dtype=float)}, index=idx)
+    first = {name: int(fn(20, s)["a"].first_valid_index() is not None and
+                       s.index.get_loc(fn(20, s)["a"].first_valid_index()))
+             for name, fn in (("InstMean", ops.InstMean),
+                              ("InstStdev", ops.InstStdev),
+                              ("InstSum", ops.InstSum))}
+    assert len(set(first.values())) == 1, f"warm-up differs: {first}"
+    assert first["InstMean"] == 20 // ops.MIN_FRACTION - 1

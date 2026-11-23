@@ -122,9 +122,15 @@ class Pipeline:
         portfolio = {n for n, o in ops.ALL_OPS.items() if o.group == "portfolio"}
         if not set(names) & portfolio:
             out.append(("no_portfolio", {}))
-        if "Rank" in names and "Demean" in names:
-            if names.index("Rank") < names.index("Demean"):
-                out.append(("rank_demean", {}))
+        # LongShortBalance does not centre. Fed a non-negative matrix -- which is
+        # exactly what Rank produces -- it yields a long-only book with net +0.5,
+        # and nothing else in the pipeline complains.
+        nonneg = {"Rank", "GroupRank", "InstRank", "Abs", "InstCount", "Sqrt"}
+        if "LongShortBalance" in names:
+            i = names.index("LongShortBalance")
+            before = names[:i]
+            if before and before[-1] in nonneg and "Demean" not in before:
+                out.append(("lsb_uncentred", {"op": before[-1]}))
         if names.count("GrossScale") > 1:
             out.append(("double_gross", {}))
         return out
@@ -215,7 +221,7 @@ PRESETS: dict[str, dict] = {
     "short-term reversal": {
         "source": "returns",
         "steps": [{"op": "InstSum", "params": {"n": 5}}, {"op": "Neg"},
-                  {"op": "Rank"}, {"op": "LongShortBalance"},
+                  {"op": "Rank"}, {"op": "Demean"}, {"op": "LongShortBalance"},
                   {"op": "GrossScale"}],
         "note": "Buy last week's losers. The best-known cross-sectional effect "
                 "in equities, and the most thoroughly killed by turnover.",
@@ -224,7 +230,7 @@ PRESETS: dict[str, dict] = {
         "source": "close",
         "steps": [{"op": "Lag", "params": {"n": 21}},
                   {"op": "LogReturns"}, {"op": "InstSum", "params": {"n": 231}},
-                  {"op": "Rank"}, {"op": "LongShortBalance"},
+                  {"op": "Rank"}, {"op": "Demean"}, {"op": "LongShortBalance"},
                   {"op": "GrossScale"}],
         "note": "Twelve-month return skipping the most recent month, which is "
                 "skipped precisely because short-term reversal lives there.",
@@ -232,7 +238,7 @@ PRESETS: dict[str, dict] = {
     "low volatility": {
         "source": "returns",
         "steps": [{"op": "InstStdev", "params": {"n": 60}}, {"op": "Neg"},
-                  {"op": "Rank"}, {"op": "LongShortBalance"},
+                  {"op": "Rank"}, {"op": "Demean"}, {"op": "LongShortBalance"},
                   {"op": "GrossScale"}],
         "note": "Long the calm names, short the wild ones. Low turnover, which "
                 "in Taiwan matters more than the raw edge.",
@@ -240,14 +246,15 @@ PRESETS: dict[str, dict] = {
     "Amihud illiquidity": {
         "source": "amihud",
         "steps": [{"op": "InstMean", "params": {"n": 20}}, {"op": "Rank"},
-                  {"op": "LongShortBalance"}, {"op": "GrossScale"}],
+                  {"op": "Demean"}, {"op": "LongShortBalance"},
+                  {"op": "GrossScale"}],
         "note": "Long illiquid names. Note the irony: the premium is paid for "
                 "illiquidity, and the cost model charges you for trading it.",
     },
     "concentrated reversal": {
         "source": "returns",
         "steps": [{"op": "InstSum", "params": {"n": 5}}, {"op": "Neg"},
-                  {"op": "Rank"}, {"op": "LongShortBalance"},
+                  {"op": "Rank"}, {"op": "Demean"}, {"op": "LongShortBalance"},
                   {"op": "TopN", "params": {"n": 25}},
                   {"op": "GrossScale"}],
         "note": "The same reversal in 50 names rather than 1,800. Higher mean, "

@@ -63,6 +63,7 @@ def test_verdict_templates_all_format():
         "years": {"pos": 2, "n": 3},
         "one_side": {"side": "long", "lng": 0.1, "sht": 0.2},
         "tradability": {"moved": 0.05},
+        "lsb_uncentred": {"op": "Rank"},
     }
     for key, row in i18n.VERDICT.items():
         for lang in ("en", "zh"):

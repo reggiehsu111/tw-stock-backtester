@@ -48,19 +48,29 @@ def Lead(n: int, mx: pd.DataFrame) -> pd.DataFrame:
     return mx.shift(-n)
 
 
+# Half the window before a trailing statistic is reported. The exact fraction is
+# arbitrary; what matters is that it is the SAME fraction everywhere, so that
+# "window 20" means one thing across the whole operator set.
+MIN_FRACTION = 2
+
+
+def _minp(n: int, floor: int = 2) -> int:
+    return max(floor, n // MIN_FRACTION)
+
+
 def InstMean(n: int, mx: pd.DataFrame) -> pd.DataFrame:
     """Trailing mean over n rows, ending at the current row."""
-    return mx.rolling(n, min_periods=max(2, n // 3)).mean()
+    return mx.rolling(n, min_periods=_minp(n)).mean()
 
 
 def InstStdev(n: int, mx: pd.DataFrame) -> pd.DataFrame:
     """Trailing standard deviation over n rows."""
-    return mx.rolling(n, min_periods=max(2, n // 3)).std(ddof=1)
+    return mx.rolling(n, min_periods=_minp(n, 2)).std(ddof=1)
 
 
 def InstSkew(n: int, mx: pd.DataFrame) -> pd.DataFrame:
     """Trailing skewness over n rows."""
-    return mx.rolling(n, min_periods=max(3, n // 3)).skew()
+    return mx.rolling(n, min_periods=_minp(n, 3)).skew()
 
 
 def InstCount(n: int, mx: pd.DataFrame) -> pd.DataFrame:
@@ -70,7 +80,7 @@ def InstCount(n: int, mx: pd.DataFrame) -> pd.DataFrame:
 
 def InstSum(n: int, mx: pd.DataFrame) -> pd.DataFrame:
     """Trailing sum over n rows."""
-    return mx.rolling(n, min_periods=max(2, n // 3)).sum()
+    return mx.rolling(n, min_periods=_minp(n, 2)).sum()
 
 
 def InstRank(n: int, mx: pd.DataFrame) -> pd.DataFrame:
@@ -100,8 +110,8 @@ def InstZscore(n: int, mx: pd.DataFrame) -> pd.DataFrame:
     exactly when the value is extreme, which is when you care.
     """
     base = mx.shift(1)
-    mu = base.rolling(n, min_periods=max(2, n // 3)).mean()
-    sd = base.rolling(n, min_periods=max(2, n // 3)).std(ddof=1)
+    mu = base.rolling(n, min_periods=_minp(n)).mean()
+    sd = base.rolling(n, min_periods=_minp(n)).std(ddof=1)
     return (mx - mu) / sd.where(sd > 0)
 
 
@@ -292,13 +302,32 @@ def Mask(mx: pd.DataFrame, condition: pd.DataFrame) -> pd.DataFrame:
 
 
 def LongShortBalance(mx: pd.DataFrame) -> pd.DataFrame:
-    """Shift each date so the long and short sides have equal gross exposure.
+    """Scale each date to +0.5 long and -0.5 short, so gross is 1.0 and net is 0.
 
-    Subtracting the row mean leaves the book dollar-neutral: no net market bet, so
-    the P&L is the cross-sectional view rather than market direction wearing a
-    signal's clothes.
+    This was previously implemented as ``mx.sub(mx.mean(axis=1), axis=0)`` --
+    byte-identical to ``Demean``. Two registry entries did the same thing, and
+    the name promised something neither of them delivered.
+
+    Subtracting the mean does make the two sides equal in gross, because the
+    positive and negative parts of a mean-zero row have the same magnitude. What
+    it does not do is fix the LEVEL: gross varies row to row with the dispersion
+    of the signal, so a day when the cross-section happened to be wide takes a
+    bigger book than a day when it was narrow, and the P&L mixes the view with
+    how large the bet was.
+
+    Scaling each side separately fixes both: dollar-neutral and unit-gross.
+
+    **It does not centre the input, and that matters.** Given an all-positive
+    matrix -- which is what ``Rank`` produces -- there is nothing to put on the
+    short side, and the result is a long-only book with gross 0.5 and net +0.5.
+    Centre first: ``LongShortBalance(Demean(Rank(x)))``, not
+    ``LongShortBalance(Rank(x))``. The builder warns when the second shape is
+    assembled, because the failure is silent otherwise.
     """
-    return mx.sub(mx.mean(axis=1), axis=0)
+    pos = mx.clip(lower=0)
+    neg = mx.clip(upper=0)
+    return (pos.div(pos.sum(axis=1).replace(0, np.nan), axis=0).mul(0.5).fillna(0.0)
+            + neg.div(neg.sum(axis=1).replace(0, np.nan), axis=0).mul(-0.5).fillna(0.0))
 
 
 def GrossScale(mx: pd.DataFrame, gmv: float = 1.0) -> pd.DataFrame:

@@ -11,7 +11,7 @@ git clone https://github.com/reggiehsu111/tw-stock-backtester.git
 cd tw-stock-backtester
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest                    # 290 tests, no network needed
+pytest                    # 293 tests, no network needed
 twbt web --fixture        # -> http://127.0.0.1:8000
 ```
 
@@ -70,50 +70,33 @@ commit by accident:
 Those choices came out of real research where each one changed a conclusion. See
 [`docs/METHOD.md`](docs/METHOD.md) for the worked examples.
 
-## Quick start
+## Working with live data
+
+The quick start above uses the committed fixture and needs no network. To fetch fresh data
+instead:
 
 ```bash
-git clone https://github.com/reggiehsu111/tw-stock-backtester.git
-cd tw-stock-backtester
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-
-# 1. fetch public TAIFEX data (a few minutes; cached to data/cache/)
-twbt fetch --start 2024-01-01
-
-# 2. run a backtest
-twbt run --strategy institutional_flow
-
-# 3. open the tearsheet, then visit the address it prints
-twbt web            # -> http://127.0.0.1:8000
+twbt fetch --start 2024-01-01            # TAIFEX futures: a few minutes
+twbt fetch-equities --start 2024-01-01   # TWSE + TPEX cross-section: ~35 min, checkpointed
+twbt fetch-events --co-id 2330           # TSMC earnings dates from MOPS
+twbt web                                 # without --fixture, serves the fetched data
 ```
 
-`twbt web` starts a local server and prints two URLs: `/` for saved futures results and
-`/build` for the interactive signal builder. Use `--port` to move it off 8000, and
-`twbt list` to see what data you already have.
+`twbt web` prints its URLs on startup:
 
-For the signal builder you also need the equity cross-section, which is a slower fetch
-because it is one request per venue per trading day:
+| page | what it is |
+|---|---|
+| `/` | signal builder — interactive cross-sectional equity backtests |
+| `/futures` | interactive futures backtest, with expiry and event studies |
+| `/results` | saved runs from `twbt run`, as static tearsheets |
 
-```bash
-twbt fetch-equities --start 2024-01-01     # ~35 min for three years; checkpointed
-twbt web                                   # -> http://127.0.0.1:8000
-```
+`twbt list` shows which datasets are already cached. All fetches are idempotent: re-running
+pulls only what is missing.
 
-**You probably do not need that fetch.** The committed fixture already contains three
-years, and `twbt web --fixture` serves the whole builder from it. The live fetch is slow
-because TWSE rate-limits aggressively and is therefore requested one session at a time —
-going faster is what got an earlier version of this client blocked across half the range.
-Progress is checkpointed, so stopping and re-running costs nothing.
-
-The page opens on a worked example — 12-1 momentum, already run, with all its plots and a
-verdict that says it loses money after costs. That is a more honest landing page than a
-blank form or a curated winner.
-
-**Offline?** A committed fixture ships in `data/fixture/` — three years of futures data
-plus a 150-name equity cross-section, about 6 MB. Skip the fetches and add `--fixture`;
-everything else is identical. The full fetch gives a 300-name universe, the fixture 150,
-so numbers shift slightly while the conclusions do not.
+**The equity fetch is the slow one, deliberately.** TWSE rate-limits aggressively — it
+answers an impatient client with HTTP 307 and an HTML page rather than an error status — so
+sessions are requested one at a time. Progress is checkpointed, so stopping and re-running
+costs nothing. You do not need it: the fixture holds the same three years.
 
 ## Data
 
@@ -239,14 +222,14 @@ committed 150-name universe; the full panel after `twbt fetch-equities` uses 300
 | preset | fixture gross / net | full gross / net |
 |---|---|---|
 | short-term reversal | −1.00 / −5.33 | −0.57 / −4.99 |
-| **12-1 momentum** | **+0.70 / +0.21** | **+0.47 / −0.03** |
-| low volatility | −0.88 / −1.19 | −0.37 / −0.68 |
+| **12-1 momentum** | **+0.59 / +0.13** | **+0.40 / −0.07** |
+| low volatility | −0.79 / −1.09 | −0.33 / −0.63 |
 | Amihud illiquidity | −0.09 / −0.86 | −0.94 / −1.82 |
 | concentrated reversal | −2.01 / −6.22 | −1.48 / −4.66 |
 
 Momentum is the instructive row twice over. It has a genuine gross edge that costs very
-nearly eat — and **its net Sharpe changes sign** between the two universes, +0.21 against
-−0.03. Nothing about the strategy changed; only how many names it could choose from.
+nearly eat — and **its net Sharpe changes sign** between the two universes, +0.13 against
+−0.07. Nothing about the strategy changed; only how many names it could choose from.
 
 That is the honest headline for this whole project. A result that flips sign when the
 universe goes from 150 names to 300 is not a result, and three years is not enough sample
