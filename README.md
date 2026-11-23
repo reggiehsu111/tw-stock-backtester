@@ -1,11 +1,16 @@
 # tw-stock-backtester
 
-A small backtester for Taiwan index futures, built around the parts of backtesting that
-usually go wrong: **look-ahead, overlapping windows, multiple testing, and costs.**
+A backtester for Taiwan markets, built around the parts of backtesting that usually go
+wrong: **look-ahead, overlapping windows, multiple testing, and costs.**
 
-It fetches free public data from TAIFEX (the Taiwan Futures Exchange), runs a strategy,
-and serves a web tearsheet. There are no credentials, no database and no vendor feed —
-`pip install -e .` then one command.
+Two halves, sharing one discipline:
+
+- a **futures** engine for single-instrument time-series strategies on TAIFEX data;
+- an **interactive signal builder** for cross-sectional equity strategies, where you
+  compose matrix operators in the browser and get a tearsheet back.
+
+Everything runs on free public data — TAIFEX, TWSE and TPEX. No credentials, no
+database, no vendor feed: `pip install -e .` and one command.
 
 ## Why these four things
 
@@ -41,9 +46,17 @@ twbt run --strategy institutional_flow
 twbt web            # -> http://127.0.0.1:8000
 ```
 
-`twbt web` starts a local server and prints its URL; open that in a browser. It serves
-whatever `twbt run` last saved, so run at least one backtest first. Use `--port` to move
-it off 8000. `twbt list` shows the available strategies and what data you already have.
+`twbt web` starts a local server and prints two URLs: `/` for saved futures results and
+`/build` for the interactive signal builder. Use `--port` to move it off 8000, and
+`twbt list` to see what data you already have.
+
+For the signal builder you also need the equity cross-section, which is a slower fetch
+because it is one request per venue per trading day:
+
+```bash
+twbt fetch-equities --start 2024-01-01     # ~30 minutes for three years, cached
+twbt web                                   # -> http://127.0.0.1:8000/build
+```
 
 **Offline?** A committed fixture ships in `data/fixture/`. Skip step 1 and add
 `--fixture` to steps 2 and 3; everything else is identical.
@@ -58,6 +71,7 @@ download from their website, no account required:
 | `futures_daily` | TAIEX futures OHLCV, settlement, open interest | `3/futDataDown` | back to 2016 at least |
 | `three_majors` | 三大法人 — daily net position by institution type | `3/futContractsDateDown` | **rolling ~3 years only** |
 | `large_trader` | 大額交易人 — top-5 / top-10 trader open interest | `3/largeTraderFutDown` | back to 2016 at least |
+| `equities` | TWSE 上市 + TPEX 上櫃 daily OHLCV, ~1,850 ordinary shares | `MI_INDEX`, `afterTrading/otc` | years, one request per venue per day |
 
 `three_majors` is the binding constraint: TAIFEX serves only a rolling three-year window
 for it, so any strategy using institutional positioning is limited to that span no matter
@@ -90,6 +104,57 @@ Two are included, both operating on daily TAIFEX data:
 These are demonstrations of the engine, **not investment advice and not validated
 signals**. `docs/METHOD.md` is explicit about what would be required before believing one.
 
+## The signal builder
+
+Cross-sectional operators — `Rank`, `Demean`, `Neutralize` — are meaningless on a single
+futures contract, so the builder runs on a panel of ~1,850 TW listed names and a
+liquidity-screened universe of 300. You compose a signal by clicking operators into a
+pipeline:
+
+```
+sig = GrossScale(LongShortBalance(Rank(Neg(InstSum(5, Returns(px))))))
+```
+
+and get back cumulative P&L, a per-year view with each year's Sharpe, a long/short
+decomposition, and the cost curve. The expression is shown as you build, because the page
+is a way to write code quickly, not a replacement for writing it.
+
+**26 operators** in four groups:
+
+| group | operators |
+|---|---|
+| time series | `Lag` `InstMean` `InstStdev` `InstSkew` `InstSum` `InstCount` `InstRank` `InstZscore` `InstBeta` `ForwardFill` `Returns` `LogReturns` |
+| cross section | `Rank` `Demean` `Zscore` `Winsorize` `DemeanByGroup` `GroupRank` `Neutralize` |
+| elementwise | `Abs` `Log` `Sqrt` `Sign` `Neg` `Clip` `Finite` `Div` `And` `Or` `Mask` |
+| portfolio | `LongShortBalance` `GrossScale` `TopN` |
+
+`Lead` exists for building the *target* of a study and is refused inside a signal.
+
+### Equity costs are asymmetric, and that is the point
+
+A futures round trip is symmetric. A Taiwan equity round trip is not:
+
+| component | bps | share |
+|---|---|---|
+| 手續費 brokerage, both sides | 12.0 | 19% |
+| **證交稅 transaction tax, sell side only** | **30.0** | **48%** |
+| spread, half each side | 20.0 | 32% |
+| **total round trip** | **62.0** | |
+
+Half the cost is a tax that falls on one side only, so buys and sells are charged from
+the *signed* weight change — `|dw| x one_rate` would halve the real cost of a long round
+trip. Shorts additionally accrue 借券費 per day held.
+
+Two frictions are modelled as mechanics rather than prices, because pricing them
+understates them: **漲停/跌停** locks mean a blocked trade simply does not happen, and
+**平盤下不得放空** means many names cannot be shorted. When a trade is blocked the prior
+weight carries forward — dropping the name instead would silently rebalance into whatever
+*was* tradable, which is a different and much better strategy than the one you tested.
+
+The honest summary: at 62 bps a round trip, most daily-rebalanced cross-sectional signals
+in Taiwan are dead before they start. The builder is designed to show you that quickly
+rather than let you find out slowly.
+
 ## Layout
 
 ```
@@ -101,9 +166,15 @@ src/twbt/
   stats.py            overlap-aware significance, noise bars
   backtest.py         the engine: signal -> position -> pnl, and the verdict
   strategies/         signal definitions
-  cli.py              fetch / run / web / list
+  cli.py              fetch / fetch-equities / run / web / list
+  ops.py              26 matrix operators; the cross-sectional vocabulary
+  equity_panel.py     wide matrices + point-in-time liquidity universe
+  xcosts.py           asymmetric TW equity costs and tradability rules
+  xsim.py             cross-sectional simulator
+  pipeline.py         a signal as a validated list of steps
   web/charts.py       inline SVG, no plotting dependency and no CDN
   web/app.py          FastAPI tearsheet
+  web/builder.py      interactive signal builder routes
 tests/                unit tests, including look-ahead regression tests
 docs/METHOD.md        why the statistics are done this way
 ```

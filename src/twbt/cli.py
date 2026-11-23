@@ -5,9 +5,10 @@ has never seen this repository should get from `git clone` to a tearsheet in the
 browser without reading anything, so every command has a sensible default and says
 what it is doing while it does it.
 
-    twbt fetch --start 2020-01-01     download public TAIFEX data into data/cache
+    twbt fetch --start 2024-01-01     download public TAIFEX futures data
+    twbt fetch-equities               download the TWSE/TPEX daily cross-section
     twbt run --strategy momentum      backtest, print the verdict, save the result
-    twbt web                          serve the tearsheet at 127.0.0.1:8000
+    twbt web                          serve the tearsheet and the signal builder
 
 Add --fixture to `run` and `web` to work entirely offline from the committed
 sample, skipping `fetch`.
@@ -62,6 +63,35 @@ def cmd_fetch(args) -> int:
               file=sys.stderr)
         return 1
     print("Done. Now run:  twbt run --strategy institutional_flow")
+    return 0
+
+
+def cmd_fetch_equities(args) -> int:
+    """The cross-section the operator vocabulary needs.
+
+    One request per venue per trading day, so this is slower than the futures
+    fetch by a wide margin -- roughly half an hour for three years. It is cached,
+    so it is a one-time cost, and re-running only pulls what is missing.
+    """
+    start, end = args.start, args.end or date.today()
+    if start >= end:
+        print(f"error: --start {start} is not before --end {end}", file=sys.stderr)
+        return 2
+
+    days = (end - start).days * 5 // 7
+    print(f"Fetching TWSE + TPEX daily quotes, {start} to {end}")
+    print(f"That is roughly {days:,} trading days at two requests each, so expect "
+          f"about {days * 2 * 1.6 / 60:.0f} minutes.")
+    print("Cached to data/cache/equities.parquet; re-running pulls only the gaps.\n")
+    try:
+        df = cache.update("equities", start, end)
+    except Exception as exc:                               # noqa: BLE001
+        print(f"  FAILED -- {exc}", file=sys.stderr)
+        return 1
+    if len(df):
+        print(f"\n  {len(df):,} rows, {df['date'].nunique():,} sessions, "
+              f"{df['ticker'].nunique():,} tickers")
+    print("\nDone. Now run:  twbt web   and open the signal builder.")
     return 0
 
 
@@ -150,15 +180,17 @@ def cmd_web(args) -> int:
     from .web.app import create_app
 
     if not RESULTS_DIR.exists() or not list(RESULTS_DIR.glob("*.pkl")):
-        print("No saved results yet. Run a backtest first, for example:\n")
-        print("  twbt run --strategy institutional_flow"
-              + (" --fixture" if args.fixture else "") + "\n")
-        return 2
+        # not fatal: the signal builder does not depend on saved results
+        print("\n  No saved futures results yet, so the results page will be empty.")
+        print("  The signal builder works regardless. To fill the results page:")
+        print("    twbt run --strategy institutional_flow"
+              + (" --fixture" if args.fixture else ""))
 
     app = create_app(fixture=args.fixture)
     url = f"http://{args.host}:{args.port}"
-    print(f"\n  Tearsheet running at  {url}\n")
-    print("  Open that address in a browser. Ctrl-C to stop.\n")
+    print(f"\n  Tearsheet        {url}")
+    print(f"  Signal builder   {url}/build\n")
+    print("  Open either address in a browser. Ctrl-C to stop.\n")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
 
@@ -171,7 +203,7 @@ def cmd_list(args) -> int:
         s = strategies.get(name)()
         print(f"  {name}\n      {s.describe()}")
     print("\nCached datasets:")
-    for name in DATASETS:
+    for name in DATASETS + ("equities",):
         cov = cache.covered(name)
         print(f"  {name}: " + (f"{cov[0]} to {cov[1]}" if cov else "not fetched"))
     return 0
@@ -211,6 +243,13 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--port", type=int, default=8000)
     w.add_argument("--fixture", action="store_true")
     w.set_defaults(func=cmd_web)
+
+    fe = sub.add_parser("fetch-equities",
+                        help="download the TWSE/TPEX daily cross-section")
+    fe.add_argument("--start", type=_date, default=_date("2024-01-01"),
+                    help="first date, YYYY-MM-DD (default 2024-01-01)")
+    fe.add_argument("--end", type=_date, default=None)
+    fe.set_defaults(func=cmd_fetch_equities)
 
     ls = sub.add_parser("list", help="show strategies and what data is cached")
     ls.set_defaults(func=cmd_list)

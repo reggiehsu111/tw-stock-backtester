@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
-from . import charts
+from . import builder, charts
 
 RESULTS_DIR = Path(__file__).resolve().parents[3] / "data" / "results"
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -61,6 +61,8 @@ def _table(df: pd.DataFrame, numeric_nd: int = 2) -> list:
 
 def create_app(fixture: bool = False) -> FastAPI:
     app = FastAPI(title="twbt tearsheet", docs_url=None, redoc_url=None)
+
+    builder.register(app, TEMPLATES, fixture=fixture)
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request):

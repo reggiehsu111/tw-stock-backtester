@@ -1,0 +1,272 @@
+{% extends "base.html" %}
+{% block title %}Signal builder{% endblock %}
+{% block subtitle %}interactive cross-sectional backtest{% endblock %}
+{% block content %}
+
+{% if load_error %}
+  <h2>Panel unavailable</h2>
+  <p class="note">{{ load_error }}</p>
+  <p>Fetch the equity cross-section first:</p>
+  <p><code>twbt fetch-equities --start 2024-01-01</code></p>
+{% else %}
+
+<p class="note" style="margin-bottom:18px">
+  {{ "{:,}".format(info.sessions) }} sessions, {{ info.start }} to {{ info.end }} ·
+  {{ "{:,}".format(info.tickers) }} tickers seen,
+  {{ "%.0f"|format(info.universe_per_day) }} in the liquid universe per day ·
+  costs {{ cost }}
+</p>
+
+<div class="builder">
+
+  <section class="panel">
+    <h2 style="margin-top:0">1 · Source</h2>
+    <select id="source" class="ctl">
+      {% for key, desc in sources.items() %}
+        <option value="{{ key }}" {% if key=='returns' %}selected{% endif %}>{{ key }} — {{ desc }}</option>
+      {% endfor %}
+    </select>
+
+    <h2>2 · Operators</h2>
+    <p class="note" style="margin:-6px 0 10px">Click to append. Drag the chips below to reorder.</p>
+    {% for group in ['time series','cross section','elementwise','portfolio'] %}
+      <div class="opgroup">
+        <h3>{{ group }}</h3>
+        <div class="palette">
+        {% for op in catalogue %}{% if op.group == group and not op.lookahead %}
+          <button type="button" class="op" data-op="{{ op.name }}"
+                  data-params='{{ op.params|tojson }}' title="{{ op.doc }}">{{ op.name }}</button>
+        {% endif %}{% endfor %}
+        </div>
+      </div>
+    {% endfor %}
+
+    <h2>3 · Settings</h2>
+    <div class="settings">
+      <label>execution lag
+        <select id="exec_shift" class="ctl">
+          <option value="1" selected>1 session (tradable)</option>
+          <option value="2">2 sessions</option>
+          <option value="5">5 sessions</option>
+          <option value="0">0 — same close (not tradable)</option>
+        </select>
+      </label>
+      <label>手續費 brokerage, each side
+        <select id="brokerage" class="ctl">
+          <option value="0.0006" selected>0.060% (typical discount)</option>
+          <option value="0.001425">0.1425% (list price)</option>
+          <option value="0.0003">0.030% (deep discount)</option>
+          <option value="0">0% (free, for comparison)</option>
+        </select>
+      </label>
+      <label>half spread
+        <select id="half_spread" class="ctl">
+          <option value="0.0010" selected>0.10%</option>
+          <option value="0.0005">0.05%</option>
+          <option value="0.0020">0.20%</option>
+          <option value="0">0% (no spread)</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="tradability" checked>
+        enforce 漲停/跌停 and 平盤下不得放空</label>
+      <label class="check"><input type="checkbox" id="day_trade">
+        當沖 tax rate (0.15% instead of 0.30%)</label>
+    </div>
+
+    <details class="costbox">
+      <summary>Where a round trip's cost goes</summary>
+      <table>
+        <tbody>
+        {% for r in cost_rows %}
+          <tr><td>{{ r.component }}</td><td>{{ "%.1f"|format(r.bps) }} bps</td>
+              <td>{{ "%.0f%%"|format(r.share*100) }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="note" style="margin:8px 0 0">The 證交稅 falls on sells only and is
+      roughly half the total. It is statutory, so the cost sliders above do not
+      move it.</p>
+    </details>
+  </section>
+
+  <section class="panel">
+    <h2 style="margin-top:0">Pipeline</h2>
+    <div id="chips" class="chips"><span class="empty-hint">Pick operators, or load a preset below.</span></div>
+    <pre id="expr" class="expr"></pre>
+    <div class="actions">
+      <button type="button" id="run" class="primary">Run backtest</button>
+      <button type="button" id="clear">Clear</button>
+    </div>
+
+    <h2>Presets</h2>
+    <div class="presets">
+      {% for name, p in presets.items() %}
+        <button type="button" class="preset" data-preset="{{ name }}">
+          <strong>{{ name }}</strong><span>{{ p.note }}</span></button>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+
+<div id="status" class="status" hidden></div>
+<div id="results" hidden>
+  <h2>Verdict</h2>
+  <ul class="verdict" id="verdict"></ul>
+  <h2>Cumulative P&amp;L</h2><div id="c_equity" class="figure"></div>
+  <h2>By year</h2><div id="c_by_year" class="figure"></div>
+  <h2>Long / short decomposition</h2><div id="c_decomp" class="figure"></div>
+  <h2>Cumulative cost</h2><div id="c_turnover" class="figure"></div>
+  <h2>Statistics</h2>
+  <div class="tablewrap"><table><tbody id="stats"></tbody></table></div>
+  <h2>By year, in numbers</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>year</th><th>gross</th><th>net</th><th>Sharpe</th><th>hit</th></tr></thead>
+    <tbody id="yeartbl"></tbody></table></div>
+</div>
+
+<script id="presetdata" type="application/json">{{ presets|tojson }}</script>
+<script>
+(function () {
+  const PRESETS = JSON.parse(document.getElementById('presetdata').textContent);
+  let steps = [];
+
+  const $ = id => document.getElementById(id);
+  const chips = $('chips'), expr = $('expr'), results = $('results'), status = $('status');
+
+  function render() {
+    chips.innerHTML = '';
+    if (!steps.length) {
+      chips.innerHTML = '<span class="empty-hint">Pick operators, or load a preset below.</span>';
+    }
+    steps.forEach((s, i) => {
+      const el = document.createElement('span');
+      el.className = 'chip'; el.draggable = true; el.dataset.i = i;
+      const lbl = document.createElement('span');
+      lbl.textContent = s.op;
+      el.appendChild(lbl);
+      Object.entries(s.params || {}).forEach(([k, v]) => {
+        const inp = document.createElement('input');
+        inp.type = 'number'; inp.value = v; inp.title = k; inp.className = 'pin';
+        inp.step = Number.isInteger(v) ? 1 : 0.01;
+        inp.addEventListener('change', e => {
+          s.params[k] = parseFloat(e.target.value); updateExpr();
+        });
+        el.appendChild(inp);
+      });
+      const x = document.createElement('button');
+      x.className = 'x'; x.textContent = '×'; x.title = 'remove';
+      x.addEventListener('click', () => { steps.splice(i, 1); render(); });
+      el.appendChild(x);
+
+      el.addEventListener('dragstart', e => e.dataTransfer.setData('text/plain', i));
+      el.addEventListener('dragover', e => e.preventDefault());
+      el.addEventListener('drop', e => {
+        e.preventDefault();
+        const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
+        const [m] = steps.splice(from, 1); steps.splice(i, 0, m); render();
+      });
+      chips.appendChild(el);
+    });
+    updateExpr();
+  }
+
+  function updateExpr() {
+    const src = $('source').value;
+    let e = src === 'close' ? 'px' : (src === 'returns' ? 'Returns(px)' : src);
+    steps.forEach(s => {
+      const a = Object.values(s.params || {}).join(', ');
+      e = a ? `${s.op}(${a}, ${e})` : `${s.op}(${e})`;
+    });
+    expr.textContent = 'sig = ' + e;
+  }
+
+  document.querySelectorAll('button.op').forEach(b => {
+    b.addEventListener('click', () => {
+      const ps = JSON.parse(b.dataset.params || '[]');
+      const params = {};
+      ps.forEach(p => { params[p.name] = p.default; });
+      steps.push({ op: b.dataset.op, params });
+      render();
+    });
+  });
+
+  document.querySelectorAll('button.preset').forEach(b => {
+    b.addEventListener('click', () => {
+      const p = PRESETS[b.dataset.preset];
+      $('source').value = p.source;
+      steps = JSON.parse(JSON.stringify(p.steps)).map(s => ({ op: s.op, params: s.params || {} }));
+      render(); run();
+    });
+  });
+
+  $('clear').addEventListener('click', () => { steps = []; render(); results.hidden = true; });
+  $('source').addEventListener('change', updateExpr);
+  $('run').addEventListener('click', run);
+
+  function setStatus(msg, bad) {
+    status.hidden = !msg; status.textContent = msg || '';
+    status.className = 'status' + (bad ? ' bad' : '');
+  }
+
+  async function run() {
+    setStatus('Running…', false);
+    $('run').disabled = true;
+    const body = {
+      source: $('source').value,
+      steps: steps,
+      options: {
+        exec_shift: parseInt($('exec_shift').value, 10),
+        brokerage: parseFloat($('brokerage').value),
+        half_spread: parseFloat($('half_spread').value),
+        tradability: $('tradability').checked,
+        day_trade: $('day_trade').checked,
+      }
+    };
+    let r, j;
+    try {
+      r = await fetch('api/run', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      j = await r.json();
+    } catch (err) {
+      setStatus('Request failed: ' + err, true); $('run').disabled = false; return;
+    }
+    $('run').disabled = false;
+    if (!r.ok) { setStatus(j.error || 'failed', true); results.hidden = true; return; }
+
+    setStatus(`Done in ${j.elapsed_ms} ms`, false);
+    expr.textContent = 'sig = ' + j.expression;
+
+    const v = $('verdict'); v.innerHTML = '';
+    j.verdict.forEach(item => {
+      const li = document.createElement('li');
+      li.className = item.fail ? 'fail' : '';
+      li.textContent = item.text; v.appendChild(li);
+    });
+
+    for (const [k, svg] of Object.entries(j.charts)) {
+      const node = $('c_' + k); if (node) node.innerHTML = svg;
+    }
+
+    const st = $('stats'); st.innerHTML = '';
+    j.stats.forEach(([k, val]) => {
+      const tr = document.createElement('tr');
+      const a = document.createElement('td'); a.textContent = k;
+      const b = document.createElement('td'); b.textContent = val;
+      tr.append(a, b); st.appendChild(tr);
+    });
+
+    const yt = $('yeartbl'); yt.innerHTML = '';
+    j.by_year.forEach(row => {
+      const tr = document.createElement('tr');
+      row.forEach(c => { const td = document.createElement('td'); td.textContent = c; tr.appendChild(td); });
+      yt.appendChild(tr);
+    });
+
+    results.hidden = false;
+  }
+
+  render();
+})();
+</script>
+{% endif %}
+{% endblock %}
