@@ -7,6 +7,7 @@ what it is doing while it does it.
 
     twbt fetch --start 2024-01-01     download public TAIFEX futures data
     twbt fetch-equities               download the TWSE/TPEX daily cross-section
+    twbt fetch-events --co-id 2330    investor-conference dates (TSMC earnings)
     twbt run --strategy momentum      backtest, print the verdict, save the result
     twbt web                          serve the tearsheet and the signal builder
 
@@ -106,6 +107,42 @@ def cmd_fetch_equities(args) -> int:
         print(f"  sectors: FAILED -- {exc}", file=sys.stderr)
 
     print("\nDone. Now run:  twbt web   and open the signal builder.")
+    return 0
+
+
+def cmd_fetch_events(args) -> int:
+    """Investor-conference dates from MOPS, classified and written as an event file."""
+    from .events import EVENTS_DIR
+    from .sources import mops
+
+    roc_now = date.today().year - 1911
+    years = range(roc_now - args.years + 1, roc_now + 1)
+    print(f"Fetching 法人說明會 filings for {args.co_id}, ROC {years[0]}..{years[-1]}")
+    try:
+        items = mops.conferences(args.co_id, years=years, verbose=True)
+    except Exception as exc:                               # noqa: BLE001
+        print(f"  FAILED -- {exc}", file=sys.stderr)
+        return 1
+
+    kinds: dict[str, int] = {}
+    for c in items:
+        kinds[c.kind] = kinds.get(c.kind, 0) + 1
+    print(f"  {len(items)} filings: " +
+          ", ".join(f"{k}={v}" for k, v in sorted(kinds.items())))
+
+    df = mops.to_frame(items, earnings_only=not args.all)
+    if df.empty:
+        print("  nothing to write", file=sys.stderr)
+        return 1
+
+    EVENTS_DIR.mkdir(parents=True, exist_ok=True)
+    out = EVENTS_DIR / f"{args.name or args.co_id}.csv"
+    df.to_csv(out, index=False)
+    print(f"  wrote {len(df)} events to {out.name}")
+    print("\n  A results call announces new figures; a broker conference restates")
+    print("  them. Only the former is an event, which is why --all is not the")
+    print("  default: it would average real announcements with restatements.")
+    print("\nDone. The event file now appears in the builder and futures pages.")
     return 0
 
 
@@ -264,6 +301,15 @@ def build_parser() -> argparse.ArgumentParser:
                     help="first date, YYYY-MM-DD (default 2024-01-01)")
     fe.add_argument("--end", type=_date, default=None)
     fe.set_defaults(func=cmd_fetch_equities)
+
+    fv = sub.add_parser("fetch-events",
+                        help="investor-conference dates from MOPS (e.g. earnings)")
+    fv.add_argument("--co-id", default="2330", help="company code (default 2330 TSMC)")
+    fv.add_argument("--years", type=int, default=4, help="how many ROC years back")
+    fv.add_argument("--name", default=None, help="event file name (default: co-id)")
+    fv.add_argument("--all", action="store_true",
+                    help="keep broker conferences too, not just results calls")
+    fv.set_defaults(func=cmd_fetch_events)
 
     ls = sub.add_parser("list", help="show strategies and what data is cached")
     ls.set_defaults(func=cmd_list)

@@ -120,3 +120,67 @@ def test_event_file_without_a_date_column_says_so(tmp_path):
     (tmp_path / "bad.csv").write_text("when,label\n2024-03-01,A\n")
     with pytest.raises(ValueError, match="date"):
         ev.load_events("bad", directory=tmp_path)
+
+
+# --------------------------------------------------------------------------- #
+# MOPS conference filings
+# --------------------------------------------------------------------------- #
+
+def test_results_calls_are_separated_from_broker_conferences():
+    """The distinction the whole earnings feature rests on.
+
+    A company files both under 法人說明會. One announces figures; the other
+    explicitly restates figures already disclosed. TSMC filed 55 over ROC
+    112-115 and 16 were results calls, so mixing them would average 16
+    announcements with 37 non-events.
+    """
+    from twbt.sources import mops
+
+    results = ("(1)公布本公司2024年第1季財務報告及2024年第2季業績展望。"
+               "(2)參加方式：請參見https://investor.tsmc.com/")
+    invited = ("本公司受邀參加摩根大通證券所舉辦之『J.P. Morgan Taiwan CEO-CFO "
+               "Conference』，會中就本公司1/18法說會已公開之財務數字、經營績效等"
+               "相關資訊進行說明。")
+    venue = "台北君悅酒店三樓 凱悅廳一區 (台北市信義區松壽路2號)"
+
+    assert mops.classify(results) == "earnings"
+    assert mops.classify(invited) == "conference"
+    assert mops.classify(venue) == "other"
+
+
+def test_a_results_call_hosted_by_a_broker_is_still_a_results_call():
+    """Both patterns can match; the figures are new whoever is in the room."""
+    from twbt.sources import mops
+    both = "本公司受邀參加某券商會議，會中公布本公司2024年第1季財務報告。"
+    assert mops.classify(both) == "earnings"
+
+
+def test_roc_dates_and_ranges_parse():
+    from twbt.sources import mops
+    assert mops._roc_to_date("113/01/18") == pd.Timestamp("2024-01-18")
+    # a multi-day conference takes its first day: by the second it is public
+    assert mops._roc_to_date("113/03/05 至 113/03/07") == pd.Timestamp("2024-03-05")
+    assert mops._roc_to_date("not a date") is None
+
+
+def test_to_frame_keeps_only_results_calls_by_default():
+    from twbt.sources import mops
+    items = [
+        mops.Conference(pd.Timestamp("2024-01-18"), "earnings", "公布…財務報告"),
+        mops.Conference(pd.Timestamp("2024-02-19"), "conference", "受邀參加…"),
+        mops.Conference(pd.Timestamp("2024-03-05"), "other", "台北君悅酒店"),
+    ]
+    assert len(mops.to_frame(items)) == 1
+    assert len(mops.to_frame(items, earnings_only=False)) == 3
+
+
+def test_the_shipped_tsmc_file_is_quarterly():
+    """A sanity check on the fetched file: four calls a year, one per quarter."""
+    tbl = ev.load_events("tsmc_earnings")
+    if tbl.empty:
+        pytest.skip("tsmc_earnings.csv not present")
+    assert len(tbl) >= 8
+    months = sorted(set(tbl["date"].dt.month))
+    assert months == [1, 4, 7, 10], f"expected quarterly cadence, got {months}"
+    per_year = tbl.groupby(tbl["date"].dt.year).size()
+    assert (per_year[per_year.index < per_year.index.max()] == 4).all()

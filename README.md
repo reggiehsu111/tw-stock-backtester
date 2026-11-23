@@ -244,15 +244,31 @@ work.
 Each renders as a CAAR with its **t-statistic dashed on top and ±2 marked**, because a
 drifting CAAR looks like a finding and with twenty events usually is not.
 
-### Why there is no TSMC earnings file
+### Where the earnings dates come from
 
-That is the obvious thing to overlay — TSMC is roughly a third of the TAIEX. Those dates
-are **not available from any public endpoint I could reach**: TWSE's open data publishes
-the latest quarter, the latest month and today's announcements, and MOPS does not serve a
-conference-date archive. TSMC's schedule is regular enough to approximate, and that
-approximation is deliberately not shipped — a date wrong by a day or two barely matters
-for a chart annotation and matters enormously for a one-day event study. Supply the real
-dates in `data/events/` and the study is exact.
+```bash
+twbt fetch-events --co-id 2330 --years 4 --name tsmc_earnings
+```
+
+MOPS publishes 法人說明會 filings for every listed and OTC company, back to the
+mid-2000s, with no account. Two things about it are worth knowing.
+
+**The host.** `mopsov.twse.com.tw` serves the data; `mops.twse.com.tw` answers the same
+path with an 833-byte error page. An earlier version of this project probed the second,
+got the error page, and concluded in its own documentation that earnings dates were not
+publicly available. They are.
+
+**Classification is not optional.** A company files under this one heading both for
+results calls (`公布本公司2023年第4季財務報告`) and for broker conferences that explicitly
+restate what was already disclosed (`受邀參加…會中就本公司1/18法說會已公開之財務數字…`).
+TSMC filed **55** over ROC 112–115: 16 results calls and 37 restatements. An event study
+over all 55 would average real announcements with non-events. `fetch-events` keeps the
+results calls; `--all` keeps everything and is not the default.
+
+Twelve of those calls fall inside the futures sample. TXF CAAR drifts to +98 bps across
+−5…+5, which looks like a finding, and no offset clears significance: max |t| is 1.54
+against a 2.89 noise bar for eleven offsets. That is why the t-statistic is drawn on the
+chart rather than left for the reader to compute.
 
 ## Layout
 

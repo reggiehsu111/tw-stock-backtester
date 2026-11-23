@@ -1,33 +1,58 @@
 # Event files
 
-Drop a CSV here and it appears in the futures tearsheet as an overlay and an
-event study. Two columns:
+Each CSV here becomes an event overlay and a CAAR study on both the builder and
+the futures page. Two columns:
 
 ```csv
 date,label
-2024-01-18,TSMC Q4 2023
-2024-04-18,TSMC Q1 2024
+2024-01-18,TSMC Q4 2023 earnings call
 ```
 
-The file name becomes the event set's name in the dropdown.
+The file name is what appears in the dropdown.
 
-## Why there is no earnings file shipped here
+## tsmc_earnings.csv
 
-The obvious thing to overlay is **TSMC's earnings dates** — it is roughly a
-third of the TAIEX, so its results move the index more than any other single
-announcement.
+Fetched, not hand-written:
 
-Those dates are not available from any public endpoint reachable from this
-project. TWSE's open data publishes the *latest* quarter, the *latest* month
-and *today's* announcements; none of them is a history, and MOPS does not serve
-a conference-date archive.
+```bash
+twbt fetch-events --co-id 2330 --years 4 --name tsmc_earnings
+```
 
-TSMC's schedule is regular enough that the dates could be approximated — the
-investor conference lands in mid-January, mid-April, mid-July and mid-October.
-That approximation is deliberately **not** shipped. A date that is wrong by a
-day or two barely matters for a chart annotation and matters enormously for a
-one-day event study, which is exactly the kind of error worth refusing to make
-on a user's behalf. Supply the real dates and the study is exact.
+The source is MOPS 法人說明會 filings, which are public for any listed or OTC
+company back to the mid-2000s. Change `--co-id` for a different company.
 
-Expiry dates need no file: they are derived from the contract data itself, and
-are exact wherever the data covers the settlement.
+### The host is the whole trick
+
+```
+https://mopsov.twse.com.tw/mops/web/ajax_t100sb02_1    <- returns the data
+https://mops.twse.com.tw/mops/web/ajax_t100sb02_1      <- 833-byte error page
+```
+
+An earlier version of this project probed the second one, got the error page,
+and concluded that earnings dates were not publicly available. They are. The
+difference was two letters.
+
+### Classification is not optional
+
+A company files under this one heading for two quite different things:
+
+| filing text | what it is |
+|---|---|
+| 公布本公司2023年第4季財務報告及2024年第1季業績展望 | the results call — **new information** |
+| 受邀參加…『J.P. Morgan Taiwan CEO-CFO Conference』，會中就本公司**1/18法說會已公開之**財務數字…進行說明 | a broker conference restating what was already disclosed |
+
+Over ROC 112–115, TSMC filed **55** of these: 16 results calls, 37 broker
+conferences, 2 unclassified. Running an event study on all 55 would average 16
+announcements with 37 restatements of them and report the result as an earnings
+effect.
+
+`twbt fetch-events` keeps only the results calls. `--all` keeps everything, and
+is not the default for that reason.
+
+### What the study actually shows
+
+Twelve TSMC earnings calls fall inside the 2024–2026 futures sample. TXF CAAR
+drifts to **+98 bps** over the −5…+5 window, which looks like something. No
+single offset reaches significance: max |t| is **1.54** against a noise bar of
+**2.89** for eleven offsets. With twelve events it could hardly be otherwise —
+which is the point of plotting the t-statistic on top of the CAAR.

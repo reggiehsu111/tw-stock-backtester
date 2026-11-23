@@ -15,22 +15,16 @@ falls back to the rule only for months with no data. Derived-from-data is exact
 where data exists; the rule is an estimate everywhere else, and the two are
 labelled differently in the result so a chart cannot quietly mix them.
 
-USER EVENTS are whatever you put in a CSV. This exists because the obvious thing
-to overlay -- TSMC's earnings dates -- is **not available from any public
-endpoint I could reach**. TWSE's open data publishes the latest quarter, the
-latest month and today's announcements; MOPS does not serve a conference-date
-archive. Rather than derive dates from TSMC's usual mid-January / mid-April /
-mid-July / mid-October rhythm and present a guess as a fact, the tearsheet takes
-a file:
+USER EVENTS are whatever you put in a CSV, and ``twbt fetch-events`` writes one
+for you from MOPS 法人說明會 filings -- see ``twbt.sources.mops``. The format is
+two columns:
 
     date,label
-    2024-01-18,TSMC Q4 2023
-    2024-04-18,TSMC Q1 2024
+    2024-01-18,TSMC Q4 2023 earnings call
 
-Put it at ``data/events/<name>.csv`` and it appears as an overlay and an event
-study. A derived earnings date would be wrong by a day or two in a way that
-matters enormously for a one-day event study and not at all for a chart
-annotation, which is precisely the kind of error worth refusing to make.
+Put it in ``data/events/`` and it appears as an overlay and an event study on
+both pages.
+
 """
 
 from __future__ import annotations
