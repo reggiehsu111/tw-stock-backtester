@@ -218,3 +218,53 @@ For reference, the bar this project's own tooling is designed to measure against
 Neither bundled strategy clears all five. They are not meant to — they exist to exercise
 the engine and to show what the output looks like when a result is merely interesting
 rather than real.
+
+---
+
+## 6. A fetch that half-fails looks exactly like a fetch that worked
+
+This one is not a statistical error. It is worse, because every check in
+sections 1–5 passed while the input was wrong.
+
+The equity fetcher ran six concurrent workers across two venues. TWSE responded
+to roughly half of those requests with **HTTP 307** and an HTML page reading
+「因為安全性考量，您所執行的頁面無法呈現」 — a rate-limit block. A 307 is not a
+4xx or a 5xx, so `raise_for_status()` said nothing; only the JSON decode failed,
+and that exception was caught by:
+
+```python
+except Exception:
+    pass          # reported by the caller
+```
+
+The caller did not report it. The comment was simply false.
+
+The result: **350 of 698 sessions had no TSE data at all.** The panel built
+without complaint, every chart rendered, the statistics were internally
+consistent, and all of it was computed on a market missing its large caps half
+the time.
+
+What eventually exposed it was not an error message but an implausible number:
+**TSMC was in a top-300-by-turnover universe on only 254 of 698 days.** The most
+liquid stock in Taiwan cannot leave that screen. Working backwards from one
+figure that could not be true found a bug that nothing else had noticed.
+
+Three things came out of it, and the third is the general one:
+
+- **Per-venue limits.** TWSE is fetched serially at 2.5s; TPEX tolerates four
+  workers. A shared setting is either as slow as the slower venue or as broken
+  as the faster one.
+- **Detect the block, stop the pass.** `BlockedError` is raised on the 307 and
+  ends that venue's pass immediately. Retrying sooner demonstrably makes it
+  worse, and grinding through three hundred more dates collecting failures
+  converts a pause into a gap.
+- **Count what arrived, not what was requested.** `equity_panel.coverage()`
+  reports names per session per board, `describe()` surfaces any venue missing
+  from whole sessions, and the page prints a warning banner above the results.
+  Three tests assert the gap is zero, one of them simply checking that TSMC
+  stays in the universe.
+
+The lesson generalises past this fetcher. **A partial failure is
+indistinguishable from a quiet market unless something counts.** Any pipeline
+that can return less data than it asked for needs a completeness check that is
+as loud as an exception, because it will not get one for free.

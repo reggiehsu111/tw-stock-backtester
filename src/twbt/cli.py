@@ -78,11 +78,18 @@ def cmd_fetch_equities(args) -> int:
         print(f"error: --start {start} is not before --end {end}", file=sys.stderr)
         return 2
 
+    from .sources import equities as _eq
+
     days = (end - start).days * 5 // 7
+    # TWSE is fetched serially on purpose -- see WORKERS_TWSE -- so it sets the
+    # clock. Quoting the real number beats a cheerful estimate that is wrong by
+    # a factor of five.
+    mins = (days * _eq.PACE_TWSE + days * _eq.PACE_SEC / _eq.WORKERS_TPEX) / 60
     print(f"Fetching TWSE + TPEX daily quotes, {start} to {end}")
-    print(f"That is roughly {days:,} trading days at two requests each, so expect "
-          f"about {days * 2 * 1.6 / 60:.0f} minutes.")
-    print("Cached to data/cache/equities.parquet; re-running pulls only the gaps.\n")
+    print(f"About {days:,} trading days. TWSE is fetched one at a time to avoid "
+          f"being rate-limited, so expect roughly {mins:.0f} minutes.")
+    print("Progress is checkpointed, so stopping and re-running loses nothing.")
+    print("Cached to data/cache/equities.parquet; re-running pulls only gaps.\n")
     try:
         df = cache.update("equities", start, end)
     except Exception as exc:                               # noqa: BLE001

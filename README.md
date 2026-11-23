@@ -54,9 +54,15 @@ For the signal builder you also need the equity cross-section, which is a slower
 because it is one request per venue per trading day:
 
 ```bash
-twbt fetch-equities --start 2024-01-01     # ~30 minutes for three years, cached
+twbt fetch-equities --start 2024-01-01     # ~35 min for three years; checkpointed
 twbt web                                   # -> http://127.0.0.1:8000
 ```
+
+**You probably do not need that fetch.** The committed fixture already contains three
+years, and `twbt web --fixture` serves the whole builder from it. The live fetch is slow
+because TWSE rate-limits aggressively and is therefore requested one session at a time —
+going faster is what got an earlier version of this client blocked across half the range.
+Progress is checkpointed, so stopping and re-running costs nothing.
 
 The page opens on a worked example — 12-1 momentum, already run, with all its plots and a
 verdict that says it loses money after costs. That is a more honest landing page than a
