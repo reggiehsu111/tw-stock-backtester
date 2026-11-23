@@ -113,6 +113,7 @@ def register(app, templates, fixture: bool = False) -> None:
         return templates.TemplateResponse(request, "builder.html", {
             "lang": lang,
             "langs": i18n.LANGS,
+            "wide": True,
             "T": lambda k: i18n.t(i18n.UI, k, lang),
             "CAP": lambda k: i18n.t(i18n.CAPTION, k, lang),
             "example": EXAMPLE,

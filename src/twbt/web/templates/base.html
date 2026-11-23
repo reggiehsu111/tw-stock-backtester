@@ -57,6 +57,10 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 .wrap { max-width: 920px; margin: 0 auto; padding: 0 16px 72px; }
+/* A tearsheet is scanned, not read, so the 920px measure that suits prose just
+   makes every chart small. The builder opts into the window width instead; the
+   results and tearsheet pages keep the narrow measure. */
+.wrap.wide { max-width: min(1860px, 97vw); }
 
 header.top {
   border-bottom: 1px solid var(--rule);
@@ -64,7 +68,7 @@ header.top {
   padding: 18px 0 16px;
   margin-bottom: 28px;
 }
-header.top .wrap { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; padding-bottom: 0; }
+header.top .wrap.wide, header.top .wrap { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; padding-bottom: 0; }
 header.top h1 { font-size: 17px; margin: 0; letter-spacing: -0.01em; }
 header.top h1 a { color: var(--ink); text-decoration: none; }
 header.top .sub { color: var(--ink-soft); font-size: 13px; }
@@ -147,7 +151,7 @@ svg .empty  { font-size: 13px; }
 
 /* ---- builder: three columns, palette / canvas / settings ---- */
 .panelinfo { margin: 0 0 16px; }
-.builder { display: grid; gap: 16px; grid-template-columns: 230px 1fr 230px;
+.builder { display: grid; gap: 18px; grid-template-columns: 240px minmax(0, 1fr) 250px;
            align-items: start; }
 @media (max-width: 1000px) { .builder { grid-template-columns: 1fr; } }
 
@@ -274,19 +278,21 @@ button.preset span { font-size: 11.5px; color: var(--ink-soft); line-height: 1.4
 .status.bad { border-color: var(--alert); color: var(--alert); }
 
 /* results: several panels per row rather than one tall stack */
-.grid4 { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.grid2 { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.twocol { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr));
+.grid4 { display: grid; gap: 16px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.grid2 { display: grid; gap: 16px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.twocol { display: grid; gap: 16px; grid-template-columns: repeat(2, minmax(0, 1fr));
           align-items: start; }
-@media (min-width: 1500px) { .grid4 { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-@media (max-width: 760px) {
+/* Three across only once that still leaves each panel ~560px. Four was a
+   mistake: it filled the row and made every chart unreadable. */
+@media (min-width: 1750px) { .grid4 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 860px) {
   .grid4, .grid2, .twocol { grid-template-columns: 1fr; }
 }
-.fig { margin: 0; border: 1px solid var(--rule); border-radius: 5px;
-       padding: 9px 10px 7px; background: var(--surface); min-width: 0; }
+.fig { margin: 0; border: 1px solid var(--rule); border-radius: 6px;
+       padding: 12px 13px 10px; background: var(--surface); min-width: 0; }
 .fig svg { width: 100%; height: auto; display: block; }
-.fig figcaption { margin-top: 3px; font-size: 11.5px; color: var(--ink-soft);
-                  line-height: 1.4; }
+.fig figcaption { margin-top: 6px; font-size: 12px; color: var(--ink-soft);
+                  line-height: 1.45; }
 
 .langsw { margin-left: 12px; padding-left: 12px; border-left: 1px solid var(--rule);
           display: inline-flex; gap: 8px; }
@@ -321,7 +327,7 @@ nav.tabs a:hover, nav.tabs a.on { color: var(--accent); }
 </head>
 <body>
 <header class="top">
-  <div class="wrap">
+  <div class="wrap{% if wide %} wide{% endif %}">
     <h1><a href="/">tw-stock-backtester</a></h1>
     <span class="sub">{% block subtitle %}{% endblock %}</span>
     {% if fixture %}<span class="badge">fixture data</span>{% endif %}
@@ -336,7 +342,7 @@ nav.tabs a:hover, nav.tabs a.on { color: var(--accent); }
     </nav>
   </div>
 </header>
-<main class="wrap">
+<main class="wrap{% if wide %} wide{% endif %}">
 {% block content %}{% endblock %}
 </main>
 </body>
