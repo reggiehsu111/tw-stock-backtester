@@ -65,7 +65,8 @@ def register(app, templates, fixture: bool = False) -> None:
             state["panel"] = PanelState.load(fixture=fixture)
         return state["panel"]
 
-    @router.get("/build", response_class=HTMLResponse)
+    @router.get("/", response_class=HTMLResponse)
+    @router.get("/build", response_class=HTMLResponse)   # kept so old links work
     def build_page(request: Request):
         try:
             p = panel()
@@ -150,7 +151,7 @@ def register(app, templates, fixture: bool = False) -> None:
                 "equity": charts.equity(
                     {"gross": res.gross.cumsum(), "net": res.net.cumsum()},
                     title="Cumulative P&L", ylab="cumulative return"),
-                "by_year": charts.by_year(res.net),
+                "by_year": charts.by_year(res.net, ylab="cumulative return"),
                 "decomp": charts.equity(
                     {"total": res.net.cumsum(),
                      "long": res.long_pnl.cumsum(),

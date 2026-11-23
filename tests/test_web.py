@@ -113,7 +113,8 @@ def test_charts_escape_text():
 # the server
 # --------------------------------------------------------------------------- #
 
-def test_app_serves_index_and_unknown_strategy_404s(tmp_path, monkeypatch):
+def test_the_front_page_is_the_signal_builder(tmp_path, monkeypatch):
+    """`/` is the builder; the saved futures results moved to `/results`."""
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
@@ -124,7 +125,60 @@ def test_app_serves_index_and_unknown_strategy_404s(tmp_path, monkeypatch):
 
     r = client.get("/")
     assert r.status_code == 200
+    assert "Signal builder" in r.text or "signal builder" in r.text.lower()
+
+    # the old path still resolves, so links written before the move keep working
+    assert client.get("/build").status_code == 200
+
+    r = client.get("/results")
+    assert r.status_code == 200
     assert "Nothing saved yet" in r.text
 
-    r = client.get("/s/does_not_exist")
-    assert r.status_code == 404
+    assert client.get("/s/does_not_exist").status_code == 404
+
+
+def test_builder_rejects_a_hostile_pipeline_over_http(tmp_path, monkeypatch):
+    """The registry boundary, exercised through the actual endpoint."""
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from twbt.web import app as app_mod
+
+    monkeypatch.setattr(app_mod, "RESULTS_DIR", tmp_path)
+    client = TestClient(app_mod.create_app())
+
+    for steps in ([{"op": "__import__"}], [{"op": "eval"}],
+                  [{"op": "Lead", "params": {"n": 1}}]):
+        r = client.post("/api/run", json={"source": "returns", "steps": steps})
+        assert r.status_code == 400
+        assert "error" in r.json()
+
+
+# --------------------------------------------------------------------------- #
+# the charts are reused at two very different scales
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize("value,ref,expected", [
+    (4744.0, 6000.0, "+4,744"),      # futures P&L in bps: no decimals wanted
+    (-0.215, 0.3, "-21.5%"),         # equity return as a fraction: percent
+    (1.37, 3.0, "+1.37"),            # in between: two decimals
+])
+def test_legend_formatting_adapts_to_scale(value, ref, expected):
+    """A fixed '.0f' prints every equity return as '+0' or '-0'."""
+    assert charts._num(value, ref) == expected
+
+
+def test_equity_legend_is_not_all_zeros_for_fractional_returns():
+    """The bug as it appeared on the page: every legend entry read +0."""
+    idx = pd.bdate_range("2024-01-02", periods=200)
+    net = pd.Series(np.linspace(0, -0.22, 200), index=idx)
+    svg = charts.equity({"net": net}, ylab="cumulative return")
+    assert "+0<" not in svg and ">-0<" not in svg
+    assert "%" in svg
+
+
+def test_by_year_axis_label_is_configurable():
+    idx = pd.bdate_range("2023-01-02", periods=500)
+    s = pd.Series(np.random.default_rng(0).normal(0, 0.01, 500), index=idx)
+    assert "cumulative return" in charts.by_year(s, ylab="cumulative return")
+    assert "cumulative bps" in charts.by_year(s)

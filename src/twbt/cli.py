@@ -188,9 +188,9 @@ def cmd_web(args) -> int:
 
     app = create_app(fixture=args.fixture)
     url = f"http://{args.host}:{args.port}"
-    print(f"\n  Tearsheet        {url}")
-    print(f"  Signal builder   {url}/build\n")
-    print("  Open either address in a browser. Ctrl-C to stop.\n")
+    print(f"\n  Signal builder    {url}")
+    print(f"  Futures results   {url}/results\n")
+    print("  Open that address in a browser. Ctrl-C to stop.\n")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
 

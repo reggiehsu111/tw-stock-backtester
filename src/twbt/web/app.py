@@ -62,9 +62,7 @@ def _table(df: pd.DataFrame, numeric_nd: int = 2) -> list:
 def create_app(fixture: bool = False) -> FastAPI:
     app = FastAPI(title="twbt tearsheet", docs_url=None, redoc_url=None)
 
-    builder.register(app, TEMPLATES, fixture=fixture)
-
-    @app.get("/", response_class=HTMLResponse)
+    @app.get("/results", response_class=HTMLResponse)
     def index(request: Request):
         results = _load_all()
         cards = []
@@ -130,4 +128,8 @@ def create_app(fixture: bool = False) -> FastAPI:
             "chart_cost": charts.cost_curve(m.sensitivity),
         })
 
+    # registered last so its "/" is added after the named routes above; FastAPI
+    # matches in definition order and these paths do not overlap, but keeping the
+    # catch-all-looking route last avoids any future shadowing
+    builder.register(app, TEMPLATES, fixture=fixture)
     return app

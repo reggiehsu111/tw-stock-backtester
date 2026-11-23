@@ -30,6 +30,25 @@ def _esc(s) -> str:
     return html.escape(str(s), quote=True)
 
 
+def _num(v: float, ref: float | None = None) -> str:
+    """Format a value with enough precision to be worth printing.
+
+    The charts are reused for two very different scales: futures P&L in basis
+    points, where values run to thousands and no decimals are wanted, and equity
+    returns as fractions, where everything is between -1 and 1. A fixed ".0f"
+    serves the first and turns the second into a column of "+0" and "-0", which
+    is how the builder's legends first rendered.
+    """
+    if v is None or not np.isfinite(v):
+        return "--"
+    scale = abs(ref) if ref is not None and np.isfinite(ref) else abs(v)
+    if scale >= 100:
+        return f"{v:+,.0f}"
+    if scale >= 1:
+        return f"{v:+,.2f}"
+    return f"{v:+.1%}"
+
+
 @dataclass
 class Scale:
     lo: float
@@ -171,12 +190,14 @@ def equity(series: dict[str, pd.Series], title: str = "Cumulative P&L",
         body.append(f'<rect class="swatch" x="{W - PAD_R - 190}" y="{ly - 8}" '
                     f'fill="{c}"/>')
         body.append(f'<text class="legend" x="{W - PAD_R - 176}" y="{ly}">'
-                    f'{_esc(name)} <tspan class="num">{last:+,.0f}</tspan></text>')
+                    f'{_esc(name)} <tspan class="num">{_num(last, hi_y - lo_y)}'
+                    f'</tspan></text>')
 
     return _svg("".join(body), title)
 
 
-def by_year(daily_net: pd.Series, title: str = "Cumulative P&L by year") -> str:
+def by_year(daily_net: pd.Series, title: str = "Cumulative P&L by year",
+            ylab: str = "cumulative bps") -> str:
     """One line per calendar year, each labelled with that year's Sharpe.
 
     This is the view that separates "it works" from "2022 happened". A strategy
@@ -208,7 +229,7 @@ def by_year(daily_net: pd.Series, title: str = "Cumulative P&L by year") -> str:
     x = Scale(0, n_max - 1, PAD_L, W - PAD_R)
     y = Scale(lo - pad, hi + pad, H - PAD_B, PAD_T)
 
-    body = [_frame(x, y, "session of year", "cumulative bps",
+    body = [_frame(x, y, "session of year", ylab,
                    list(np.linspace(0, n_max - 1, 5)),
                    _nice_ticks(lo - pad, hi + pad))]
     if lo < 0 < hi:
@@ -234,7 +255,8 @@ def by_year(daily_net: pd.Series, title: str = "Cumulative P&L by year") -> str:
                 f'{_path(np.arange(len(avg)), avg.to_numpy(), x, y)}"/>')
     ly = PAD_T + 14 + len(paths) * 15
     body.append(f'<text class="legend avglab" x="{W - PAD_R - 150}" y="{ly}">'
-                f'AvgPath <tspan class="num">{avg.iloc[-1]:+,.0f}</tspan></text>')
+                f'AvgPath <tspan class="num">{_num(avg.iloc[-1], hi - lo)}'
+                f'</tspan></text>')
 
     return _svg("".join(body), title)
 

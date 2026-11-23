@@ -30,7 +30,10 @@ its fields rather than by position, which moves between dates.
 
 from __future__ import annotations
 
+import random
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -41,6 +44,9 @@ UA = ("Mozilla/5.0 (compatible; tw-stock-backtester/0.1; "
       "+https://github.com/reggiehsu111/tw-stock-backtester)")
 PACE_SEC = 1.1
 RETRIES = 3
+# Small on purpose. What a public service minds is simultaneous load, not total
+# requests, and six is well inside what a browser opens against one host.
+WORKERS = 6
 
 TWSE_URL = "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX"
 TPEX_URL = "https://www.tpex.org.tw/www/zh-tw/afterTrading/otc"
@@ -147,50 +153,95 @@ def _is_equity(ticker: str) -> bool:
     return len(t) == 4 and t.isdigit() and not t.startswith("00")
 
 
+def _fetch_one_day(d: date, session: requests.Session) -> pd.DataFrame:
+    """Both venues for one date, as a single frame. Empty on a non-trading day."""
+    parts = []
+    for fn in (fetch_twse_day, fetch_tpex_day):
+        try:
+            parts.append(fn(d, session))
+        except Exception:                               # noqa: BLE001
+            pass                                        # reported by the caller
+    parts = [p for p in parts if len(p)]
+    if not parts:
+        return pd.DataFrame()
+    day = pd.concat(parts, ignore_index=True)
+    return day[day["ticker"].map(_is_equity)]
+
+
 def fetch_range(start: date, end: date, session: requests.Session | None = None,
-                verbose: bool = True) -> pd.DataFrame:
+                verbose: bool = True, workers: int = WORKERS,
+                checkpoint=None, checkpoint_every: int = 40) -> pd.DataFrame:
     """Daily cross-section over [start, end], both boards, ordinary shares only.
 
-    Returns long format: one row per (date, ticker). Weekends are skipped without
-    a request; other non-trading days cost one request each and return nothing,
-    which is the cheapest way to discover the calendar from a source that does
-    not publish one.
+    Returns long format: one row per (date, ticker).
+
+    Two things make this bearable, both learned by waiting for the serial version.
+
+    CONCURRENCY. This is one request per venue per trading day, so three years is
+    about 1,500 requests. Done one at a time at a polite pace that is the better
+    part of an hour, and almost all of it is spent waiting on the network rather
+    than on anybody's server. A small thread pool collapses it to a few minutes
+    while keeping the number of *simultaneous* requests low, which is the thing a
+    public service actually cares about. Each worker holds its own session,
+    because requests.Session is not thread-safe.
+
+    CHECKPOINTS. ``checkpoint`` is called with the frame so far every
+    ``checkpoint_every`` completed days. A long fetch that writes nothing until
+    the end has no progress to show and nothing to keep if it is interrupted,
+    which is exactly what happened the first time.
+
+    Weekends are skipped without a request. Other non-trading days cost one
+    request and return nothing, which is the cheapest way to discover the
+    calendar from a source that does not publish one.
     """
-    own = session is None
-    session = session or requests.Session()
+    days = [d for d in _daterange(start, end) if d.weekday() < 5]
+    if not days:
+        return pd.DataFrame(columns=["date", "ticker"])
+
     out: list[pd.DataFrame] = []
-    cur = start
-    n_days = 0
-    try:
-        while cur <= end:
-            if cur.weekday() >= 5:
-                cur += timedelta(days=1)
+    done = 0
+    local = threading.local()
+
+    def worker(d: date) -> pd.DataFrame:
+        if not hasattr(local, "session"):
+            local.session = session or requests.Session()
+        # stagger so N workers do not all fire at the same instant
+        time.sleep(PACE_SEC * random.random())
+        return _fetch_one_day(d, local.session)
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(worker, d): d for d in days}
+        for fut in as_completed(futures):
+            d = futures[fut]
+            try:
+                day = fut.result()
+            except Exception as exc:                    # noqa: BLE001
+                if verbose:
+                    print(f"    {d}: {exc}")
                 continue
-            parts = []
-            for fn in (fetch_twse_day, fetch_tpex_day):
-                try:
-                    parts.append(fn(cur, session))
-                except Exception as exc:                # noqa: BLE001
-                    if verbose:
-                        print(f"    {cur} {fn.__name__}: {exc}")
-                time.sleep(PACE_SEC)
-            day = pd.concat([p for p in parts if len(p)], ignore_index=True) \
-                if any(len(p) for p in parts) else pd.DataFrame()
             if len(day):
-                day = day[day["ticker"].map(_is_equity)]
                 out.append(day)
-                n_days += 1
-                if verbose and n_days % 20 == 0:
-                    print(f"    {cur}: {n_days} trading days, "
-                          f"{sum(len(d) for d in out):,} rows")
-            cur += timedelta(days=1)
-    finally:
-        if own:
-            session.close()
+            done += 1
+            if verbose and done % 25 == 0:
+                print(f"    {done}/{len(days)} days, "
+                      f"{sum(len(x) for x in out):,} rows", flush=True)
+            if checkpoint and out and done % checkpoint_every == 0:
+                checkpoint(_combine(out))
 
     if not out:
         return pd.DataFrame(columns=["date", "ticker"])
-    return (pd.concat(out, ignore_index=True)
+    return _combine(out)
+
+
+def _combine(frames: list[pd.DataFrame]) -> pd.DataFrame:
+    return (pd.concat(frames, ignore_index=True)
             .drop_duplicates(subset=["date", "ticker"])
             .sort_values(["date", "ticker"])
             .reset_index(drop=True))
+
+
+def _daterange(start: date, end: date):
+    cur = start
+    while cur <= end:
+        yield cur
+        cur += timedelta(days=1)

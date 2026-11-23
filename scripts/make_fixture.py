@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from twbt import cache, panel
+from twbt import cache, equity_panel, panel
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "data" / "fixture"
@@ -42,8 +42,24 @@ def main() -> int:
             & (lt["expiry"] == panel.EXPIRY_ALL_MONTHS)
             & (lt["trader_type"] == panel.TRADER_ALL)]
 
-    for name, df in (("futures_daily", fut), ("three_majors", maj),
-                     ("large_trader", lt)):
+    frames = [("futures_daily", fut), ("three_majors", maj), ("large_trader", lt)]
+
+    # The equity cross-section is ~1,850 names a day, which is far too much to
+    # commit. The fixture keeps only names that were ever in the liquid universe,
+    # using the same point-in-time screen the app applies, so the committed sample
+    # cannot disagree with the live path about who is tradable.
+    try:
+        eq = cache.load("equities")
+    except FileNotFoundError:
+        eq = None
+    if eq is not None and len(eq):
+        mats = equity_panel.build()
+        univ = equity_panel.liquid_universe(mats)
+        keep = set(univ.columns[univ.any()])
+        eq = eq[eq["ticker"].isin(keep)]
+        frames.append(("equities", eq))
+
+    for name, df in frames:
         path = OUT / f"{name}.parquet"
         df.reset_index(drop=True).to_parquet(path, index=False,
                                              compression="zstd")
