@@ -60,8 +60,24 @@ assumption — it simply throws away the overlap.
 Another specification in the same family collapsed from −11.79 to **−1.65**. You cannot
 tell in advance which it will be.
 
+How bad is it in general? `tests/test_stats.py` runs the construction on data with
+*no relationship at all* — a trailing 30-day mean against a strictly forward 30-day
+mean of the same white noise, two windows that never share a single observation.
+Across 20 seeds:
+
+| | median \|t\| | fraction over 2 |
+|---|---|---|
+| OLS | 3.25 | 60% |
+| Newey–West | 0.88 | 20% |
+| disjoint | 0.46 | 10% |
+
+OLS declares significance on noise the majority of the time. One seed gives
+t = +4.94 against a disjoint t of +0.45 — a result that would be written up.
+
 **What this project does:** `stats.regress()` returns all three t-statistics side by side
 and the tearsheet displays them together. There is no way to get only the OLS number.
+`RegressionResult.honest_t` picks the disjoint value whenever overlap is declared, and
+`.inflation` reports the ratio so you can see how much the overlap was worth.
 
 ---
 
@@ -75,8 +91,24 @@ of tests you actually ran*.
 same return series into `n_tests` groups and records the largest |t| each time. The 95th
 percentile of that distribution is the bar a real result has to clear.
 
-Typical bars, for the sample sizes here: 12 tests → ≈3.2, 20 tests → ≈3.1, 40 tests
-→ ≈3.5. A t of 2.8 from a forty-variant sweep is *below* the noise floor.
+Measured on a realistic sample (1,300 daily observations, fat-tailed):
+
+| tests run | 95th-percentile \|t\| under the null |
+|---|---|
+| 1 | 1.97 |
+| 5 | 2.55 |
+| 12 | 2.86 |
+| 20 | 3.06 |
+| 40 | 3.36 |
+| 100 | 4.24 |
+
+The first row recovers the textbook 1.96, which is the sanity check that the simulation
+is calibrated. The rest is the cost of searching. **A t of 2.8 from a forty-variant sweep
+is below the noise floor** — and 40 variants is a small sweep.
+
+Two buckets gives the same bar as one test, not two: each bucket is the other's
+complement, so there is only one comparison. The function handles this rather than
+counting it twice.
 
 The related discipline: when splitting a result into buckets, the statistic that matters
 is the bucket **versus its complement**, not the bucket's own t. A bucket can easily show
