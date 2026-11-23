@@ -266,52 +266,50 @@ def register(app, templates, fixture: bool = False) -> None:
         # The extra panels. Each is a re-run or a regrouping of what we already
         # have, and the whole set costs well under a second on this panel, so
         # they are computed every time rather than hidden behind a button.
-        lags, bkt, boards = {}, {}, {}
-        try:
-            lags = xsim.lag_sweep(sig, p.mats["close"], cost=cost,
-                                  enforce_tradability=tradability)
-        except Exception:                               # noqa: BLE001
-            pass
-        try:
-            bkt = xsim.bucket_pnl(sig, res.returns, exec_shift=exec_shift)
-        except Exception:                               # noqa: BLE001
-            pass
-        try:
-            if "board" in p.mats:
-                boards = xsim.group_pnl(res.weights, res.returns, p.mats["board"])
-        except Exception:                               # noqa: BLE001
-            pass
+        # Each extra analysis is optional, but optional must not mean "vanishes
+        # without explanation". A panel that renders an em-dash tells you
+        # nothing about whether there was no data or whether it threw, so the
+        # reason is captured and shown inside the empty panel.
+        why: dict[str, str] = {}
 
-        sectors, tops, tshorts, conc, rsharpe = {}, {}, {}, {}, None
-        csweep = hsweep = expo = None
-        try:
-            if "sector" in p.mats:
-                allsec = xsim.group_pnl(res.weights, res.returns, p.mats["sector"])
-                # 35 sectors is an unreadable chart; show the ones that moved
-                sectors = dict(sorted(allsec.items(),
-                                      key=lambda kv: -abs(float(kv[1].iloc[-1])))[:8])
-        except Exception:                               # noqa: BLE001
-            pass
-        try:
-            tops = xsim.top_names(res.weights, res.returns, 5, "long")
-            tshorts = xsim.top_names(res.weights, res.returns, 5, "short")
-            conc = xsim.concentration(res.weights)
-            rsharpe = xsim.rolling_sharpe(res.net)
-        except Exception:                               # noqa: BLE001
-            pass
-        try:
-            csweep = xsim.cost_sweep(sig, p.mats["close"], cost,
-                                     exec_shift=exec_shift,
-                                     enforce_tradability=tradability)
-            hsweep = xsim.hold_sweep(sig, p.mats["close"], cost=cost,
-                                     exec_shift=exec_shift,
-                                     enforce_tradability=tradability)
-        except Exception:                               # noqa: BLE001
-            pass
-        try:
-            expo = xsim.factor_exposures(res.weights, p.factors)
-        except Exception:                               # noqa: BLE001
-            pass
+        def attempt(key, fn, default):
+            try:
+                return fn()
+            except Exception as exc:                    # noqa: BLE001
+                why[key] = f"{type(exc).__name__}: {exc}"
+                return default
+
+        def _sectors():
+            if "sector" not in p.mats:
+                return {}
+            allsec = xsim.group_pnl(res.weights, res.returns, p.mats["sector"])
+            # 35 sectors is an unreadable chart; show the ones that moved
+            return dict(sorted(allsec.items(),
+                               key=lambda kv: -abs(float(kv[1].iloc[-1])))[:8])
+
+        lags = attempt("lag_decay", lambda: xsim.lag_sweep(
+            sig, p.mats["close"], cost=cost,
+            enforce_tradability=tradability), {})
+        bkt = attempt("buckets", lambda: xsim.bucket_pnl(
+            sig, res.returns, exec_shift=exec_shift), {})
+        boards = attempt("boards", lambda: (
+            xsim.group_pnl(res.weights, res.returns, p.mats["board"])
+            if "board" in p.mats else {}), {})
+        sectors = attempt("sectors", _sectors, {})
+        tops = attempt("top_long", lambda: xsim.top_names(
+            res.weights, res.returns, 5, "long"), {})
+        tshorts = attempt("top_short", lambda: xsim.top_names(
+            res.weights, res.returns, 5, "short"), {})
+        conc = attempt("concentration", lambda: xsim.concentration(res.weights), {})
+        rsharpe = attempt("roll_sharpe", lambda: xsim.rolling_sharpe(res.net), None)
+        csweep = attempt("cost_sweep", lambda: xsim.cost_sweep(
+            sig, p.mats["close"], cost, exec_shift=exec_shift,
+            enforce_tradability=tradability), None)
+        hsweep = attempt("hold_sweep", lambda: xsim.hold_sweep(
+            sig, p.mats["close"], cost=cost, exec_shift=exec_shift,
+            enforce_tradability=tradability), None)
+        expo = attempt("exposures", lambda: xsim.factor_exposures(
+            res.weights, p.factors), None)
 
         return JSONResponse({
             "expression": shown,
@@ -362,7 +360,7 @@ def register(app, templates, fixture: bool = False) -> None:
                                             ylab=C("y_cum_return")),
                 "boards": (charts.groups(boards, title=C("boards"),
                                          ylab=C("y_cum_return"))
-                           if boards else charts.empty("—")),
+                           if boards else charts.empty(why.get("boards", "—"))),
 
                 "cost": charts.equity(
                     {C("l_gross"): res.gross.cumsum(), C("l_net"): res.net.cumsum(),
@@ -393,35 +391,35 @@ def register(app, templates, fixture: bool = False) -> None:
                 # attribution
                 "sectors": (charts.groups(sectors, title=C("sectors"),
                                           ylab=C("y_cum_return"))
-                            if sectors else charts.empty("—")),
+                            if sectors else charts.empty(why.get("sectors", "—"))),
                 "top_long": (charts.groups(tops, title=C("top_long"),
                                            ylab=C("y_cum_return"))
-                             if tops else charts.empty("—")),
+                             if tops else charts.empty(why.get("top_long", "—"))),
                 "top_short": (charts.groups(tshorts, title=C("top_short"),
                                             ylab=C("y_cum_return"))
-                              if tshorts else charts.empty("—")),
+                              if tshorts else charts.empty(why.get("top_short", "—"))),
                 "concentration": (charts.counts(
                     conc.get("max_weight"), conc.get("top10_share"),
                     title=C("concentration"),
                     labels=(C("l_max_weight"), C("l_top10")), ylab=C("y_share"))
-                    if conc else charts.empty("—")),
+                    if conc else charts.empty(why.get("concentration", "—"))),
 
                 # stability and sensitivity
                 "roll_sharpe": (charts.series_panel(
                     C("y_sharpe"), rsharpe, C("roll_sharpe"), C("y_sharpe"))
-                    if rsharpe is not None and len(rsharpe) else charts.empty("—")),
+                    if rsharpe is not None and len(rsharpe) else charts.empty(why.get("roll_sharpe", "—"))),
                 "cost_sweep": (charts.table_line(
                     csweep, "factor", "sharpe", C("cost_sweep"), C("y_sharpe"),
                     C("x_cost"), C("y_sharpe"))
-                    if csweep is not None and len(csweep) else charts.empty("—")),
+                    if csweep is not None and len(csweep) else charts.empty(why.get("cost_sweep", "—"))),
                 "hold_sweep": (charts.table_line(
                     hsweep, "hold", "sharpe", C("hold_sweep"), C("y_sharpe"),
                     C("x_hold"), C("y_sharpe"))
-                    if hsweep is not None and len(hsweep) else charts.empty("—")),
+                    if hsweep is not None and len(hsweep) else charts.empty(why.get("hold_sweep", "—"))),
                 "exposures": (charts.groups(
                     {c: expo[c] for c in expo.columns}, title=C("exposures"),
                     ylab=C("y_share"))
-                    if expo is not None and len(expo) else charts.empty("—")),
+                    if expo is not None and len(expo) else charts.empty(why.get("exposures", "—"))),
             },
         })
 

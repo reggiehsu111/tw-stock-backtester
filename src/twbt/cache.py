@@ -109,14 +109,23 @@ def update(name: str, start: date, end: date, root: Path | None = None,
         if name in EQUITY_DATASETS:
             # write partial progress as it arrives: this fetch runs for minutes,
             # and losing all of it to one interruption is not acceptable
+            # One failed checkpoint is not fatal -- the next one will carry the
+            # same rows. Every checkpoint failing IS fatal in effect, because
+            # the run then saves nothing and says nothing, so the first failure
+            # is reported rather than swallowed.
+            _warned = []
+
             def _save(partial, _frames=frames, _name=name, _root=root):
                 try:
                     combined = (pd.concat(_frames + [partial], ignore_index=True)
                                 .drop_duplicates(subset=["date", "ticker"])
                                 .sort_values("date").reset_index(drop=True))
                     combined.to_parquet(_path(_name, _root), index=False)
-                except Exception:                      # noqa: BLE001
-                    pass                               # a failed checkpoint is not fatal
+                except Exception as exc:               # noqa: BLE001
+                    if not _warned:
+                        _warned.append(1)
+                        print(f"    WARNING: checkpoint failed ({exc}); "
+                              "progress is not being saved", flush=True)
 
             got = equities.fetch_range(a, b, verbose=verbose, checkpoint=_save)
         else:
