@@ -39,12 +39,28 @@ CONTRACTS = {
 # Representative all-in cost per side, in index points, excluding the spread:
 # exchange fee + clearing + broker commission + the futures transaction tax.
 # Quoted per side because fees are charged per side, unlike the spread.
+#
+# These are NT$ amounts divided by each contract's point value, which is why the
+# smaller contracts cost MORE per index point: the same NT$ fee spread over 1/4 or
+# 1/20 of the notional.
 FEES_PTS_PER_SIDE = {"TXF": 0.35, "MXF": 0.40, "TMF": 0.45}
 
-# Observed median bid-ask width in index points. The large contract is the tightest
-# in percentage terms; the micro is quoted in the same ticks but far less of the
-# time, so its effective width is wider.
-MEDIAN_SPREAD_PTS = {"TXF": 3.0, "MXF": 1.0, "TMF": 2.0}
+# Median bid-ask width in index points.
+#
+# Only TXF is measured: 3.0 points from tick data, with just 6% of quotes at the
+# one-tick minimum. MXF and TMF are ASSUMED, and the assumption is deliberately not
+# "tighter" -- all three track the same index, arbitrage keeps their quotes close,
+# and the smaller books are thinner rather than better. Guessing a tighter spread
+# for the contracts that were not measured would make them look cheaper than the one
+# that was, which is the flattering direction and would be an artefact of the guess.
+#
+# A spread in index points converts to basis points identically for all three, since
+# bps = points / price: contract size does not enter. What genuinely differs is
+# fees, which are a fixed NT$ amount divided by a smaller point value.
+#
+# These are defaults to start from, not measurements of your fills. The sensitivity
+# sweep exists so the conclusion does not rest on them.
+MEDIAN_SPREAD_PTS = {"TXF": 3.0, "MXF": 3.0, "TMF": 4.0}
 
 # The opening and closing minutes are wider than the middle of the session.
 SESSION_WIDENING = {"open": 1.5, "close": 1.2, "mid": 1.0}

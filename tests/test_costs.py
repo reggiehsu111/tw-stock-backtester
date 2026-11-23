@@ -53,14 +53,27 @@ def test_bps_cost_accepts_a_price_series_and_handles_bad_prices():
 
 
 def test_smaller_contracts_cost_more_in_bps():
-    """The micro is the same index exposure at a worse price; the model must say so."""
+    """Smaller contracts must never look cheaper than the one that was measured.
+
+    A spread in index points is the same bps for all three -- bps = points / price,
+    and contract size does not enter. The ordering therefore comes from fees, which
+    are a fixed NT$ amount over a smaller point value. If a default ever made the
+    micro look cheapest, that would be an artefact of a guess flattering the
+    contracts nobody measured.
+    """
     px = 23_000
     big = costs.CostModel("TXF").round_trip_bps(px)
     mini = costs.CostModel("MXF").round_trip_bps(px)
     micro = costs.CostModel("TMF").round_trip_bps(px)
-    # TXF has the widest raw spread but it is spread over 4x the notional of MXF
-    assert micro > mini
+    assert big < mini < micro
     assert all(v > 0 for v in (big, mini, micro))
+
+
+def test_spread_in_points_is_contract_independent_in_bps():
+    """The same point width must give the same bps on every contract."""
+    a = costs.CostModel("TXF", spread_pts=3.0, fees_pts_per_side=0.0)
+    b = costs.CostModel("TMF", spread_pts=3.0, fees_pts_per_side=0.0)
+    assert a.round_trip_bps(20_000) == pytest.approx(b.round_trip_bps(20_000))
 
 
 def test_scaled_turns_only_the_spread_knob():

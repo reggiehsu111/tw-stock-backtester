@@ -167,14 +167,22 @@ class BacktestResult:
 
         sens = self.main.sensitivity
         if len(sens):
-            dies = sens.loc[sens["net_t"] <= 0, "spread_factor"]
-            if len(dies):
-                f = dies.iloc[0]
-                verb = "FAILS" if f <= 1.5 else "survives"
-                out.append(f"{verb} cost-robustness: net t reaches zero at "
-                           f"{f:.1f}x the spread estimate.")
+            if not (m.mean > 0):
+                # "survives every cost assumption" is not praise for something that
+                # loses money at zero cost -- the cost curve is only meaningful once
+                # there is an edge for cost to eat
+                out.append("Cost-robustness is not applicable: the strategy is not "
+                           "profitable before costs.")
             else:
-                out.append("Survives every spread assumption tested.")
+                dies = sens.loc[sens["net_t"] <= 0, "spread_factor"]
+                if len(dies):
+                    f = dies.iloc[0]
+                    verb = "FAILS" if f <= 1.5 else "survives"
+                    out.append(f"{verb} cost-robustness: net t reaches zero at "
+                               f"{f:.1f}x the spread estimate.")
+                else:
+                    out.append("Survives every spread assumption tested "
+                               f"(up to {sens['spread_factor'].max():.1f}x).")
 
         if self.walk_forward is not None and len(self.walk_forward):
             wf = self.walk_forward
