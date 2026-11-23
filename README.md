@@ -3,14 +3,36 @@
 A backtester for Taiwan markets, built around the parts of backtesting that usually go
 wrong: **look-ahead, overlapping windows, multiple testing, and costs.**
 
-Two halves, sharing one discipline:
+Everything runs on free public data — TAIFEX, TWSE, TPEX and MOPS. No credentials, no
+database, no vendor feed.
 
-- a **futures** engine for single-instrument time-series strategies on TAIFEX data;
-- an **interactive signal builder** for cross-sectional equity strategies, where you
-  compose matrix operators in the browser and get a tearsheet back.
+```bash
+pip install -e ".[dev]"
+pytest                    # 289 tests, no network needed
+twbt web --fixture        # -> http://127.0.0.1:8000
+```
 
-Everything runs on free public data — TAIFEX, TWSE and TPEX. No credentials, no
-database, no vendor feed: `pip install -e .` and one command.
+That is the whole setup. A three-year sample ships in the repository, so nothing needs
+fetching to see the tool work.
+
+**Start here:** [`docs/SUMMARY.md`](docs/SUMMARY.md) — problem, intended user, scope and
+known limitations. [`docs/METHOD.md`](docs/METHOD.md) — why each statistical choice was
+made, with the worked example that forced it. [`docs/AI_NOTES.md`](docs/AI_NOTES.md) —
+how this was built with Claude Code, and the six things it got wrong.
+
+## How to read this repository
+
+The core is small and is the part worth reviewing:
+
+| file | lines | what it is |
+|---|---|---|
+| `stats.py` | ~220 | overlap-aware significance, bootstrapped noise bars |
+| `backtest.py` | ~290 | signal → position → P&L, and the verdict |
+| `costs.py` / `xcosts.py` | ~230 each | futures and equity cost models |
+| `panel.py` / `ops.py` | ~190 / ~460 | trailing-only normalisation, 35 matrix operators |
+
+Everything else — two web pages, five data sources, i18n, the expression parser — is a
+layer on top of that. If you read four files, read those.
 
 ## Why these four things
 
