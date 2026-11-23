@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+# cached downloads are regenerable; the committed fixture lives in data/fixture/
+data/cache/*
+!data/cache/.gitkeep
