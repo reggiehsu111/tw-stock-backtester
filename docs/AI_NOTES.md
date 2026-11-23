@@ -224,3 +224,6 @@ implementation is independent, written against public data.
 Those excerpts are **redacted from the submitted conversation history**, along
 with hostnames, IP addresses and credentials. The redactions are cuts, not
 rewrites: nothing has been reworded to read better.
+
+See [`CONVERSATION_EXCERPTS.md`](CONVERSATION_EXCERPTS.md) for the seven selected
+exchanges and the full disclosure of what was selected, truncated and redacted.

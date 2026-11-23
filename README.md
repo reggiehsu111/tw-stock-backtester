@@ -19,6 +19,8 @@ fetching to see the tool work.
 known limitations. [`docs/METHOD.md`](docs/METHOD.md) — why each statistical choice was
 made, with the worked example that forced it. [`docs/AI_NOTES.md`](docs/AI_NOTES.md) —
 how this was built with Claude Code, and the six things it got wrong.
+[`docs/CONVERSATION_EXCERPTS.md`](docs/CONVERSATION_EXCERPTS.md) — seven exchanges from the
+session, verbatim, with redactions disclosed.
 
 ## How to read this repository
 
