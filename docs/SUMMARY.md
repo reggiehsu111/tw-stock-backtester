@@ -102,6 +102,12 @@ same three years and `--fixture` serves everything offline.
 **Equity shares-outstanding is TPEX-only.** The size factor falls back to price
 where share counts are missing, which is most TWSE names.
 
+**Fixture and full-panel results differ, and one preset changes sign.** The committed
+fixture screens a 150-name universe; the full fetch uses 300. 12-1 momentum nets +0.21 on
+the first and −0.03 on the second. Nothing about the strategy changed — only how many
+names it could choose from, which is itself the clearest evidence that a marginal result
+over three years should not be believed. The README tabulates both.
+
 **No transaction-level fills.** Positions are weights, costs are charged on
 weight changes, and there is no model of partial fills, market impact, or
 size-dependence. It prices one contract or one unit of notional.
@@ -109,10 +115,14 @@ size-dependence. It prices one contract or one unit of notional.
 ## Verifying it
 
 ```bash
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest                    # 289 tests, no network needed
+pytest                    # 290 tests, no network needed
 twbt web --fixture        # -> http://127.0.0.1:8000
 ```
+
+Verified on Python 3.11 from a clean clone. No credentials are required for anything, and
+neither `pytest` nor `--fixture` touches the network.
 
 The suite includes guard tests that fail if the known failure modes return:
 `test_no_lookahead.py` corrupts the future half of a series and asserts the past

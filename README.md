@@ -7,13 +7,31 @@ Everything runs on free public data — TAIFEX, TWSE, TPEX and MOPS. No credenti
 database, no vendor feed.
 
 ```bash
+git clone https://github.com/reggiehsu111/tw-stock-backtester.git
+cd tw-stock-backtester
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest                    # 289 tests, no network needed
+pytest                    # 290 tests, no network needed
 twbt web --fixture        # -> http://127.0.0.1:8000
 ```
 
 That is the whole setup. A three-year sample ships in the repository, so nothing needs
 fetching to see the tool work.
+
+### Prerequisites
+
+| | |
+|---|---|
+| **Python** | **3.11 verified.** `pyproject.toml` allows ≥3.10; 3.12 and 3.13 are untested, and the pandas/pyarrow wheels are where trouble would appear. |
+| **OS** | developed and verified on macOS. Nothing is platform-specific — pure Python plus wheels. |
+| **Credentials** | none, for anything. No API keys, no database, no vendor account. |
+| **Network** | **not needed** for `pytest` or `twbt web --fixture`. Only the `twbt fetch-*` commands reach the internet. |
+| **Disk** | ~18 MB cloned; ~250 MB with the virtualenv. |
+| **Time** | install ~15 s, tests ~20 s. |
+
+Activate the virtualenv in the same shell before running `twbt` — the entry point installs
+into `.venv/bin`, and "command not found" is the usual symptom of skipping it. If port 8000
+is busy, `twbt web --fixture --port 8001`.
 
 **Start here:** [`docs/SUMMARY.md`](docs/SUMMARY.md) — problem, intended user, scope and
 known limitations. [`docs/METHOD.md`](docs/METHOD.md) — why each statistical choice was
@@ -215,21 +233,25 @@ weight carries forward — dropping the name instead would silently rebalance in
 
 ### What the bundled presets actually do
 
-Measured over 2024-01 to 2026-11, 698 sessions, ~290 names a day:
+Two columns, because they differ and you will see the first one. `--fixture` uses the
+committed 150-name universe; the full panel after `twbt fetch-equities` uses 300.
 
-| preset | gross Sharpe | net Sharpe | turnover/day | names |
-|---|---|---|---|---|
-| short-term reversal | −0.57 | −4.99 | 26.6% | 282 |
-| **12-1 momentum** | **+0.47** | **−0.03** | 3.2% | 252 |
-| low volatility | −0.37 | −0.68 | 2.4% | 288 |
-| Amihud illiquidity | −0.94 | −1.82 | 4.0% | 288 |
-| concentrated reversal | −1.48 | −4.66 | 54.0% | 12 |
+| preset | fixture gross / net | full gross / net |
+|---|---|---|
+| short-term reversal | −1.00 / −5.33 | −0.57 / −4.99 |
+| **12-1 momentum** | **+0.70 / +0.21** | **+0.47 / −0.03** |
+| low volatility | −0.88 / −1.19 | −0.37 / −0.68 |
+| Amihud illiquidity | −0.09 / −0.86 | −0.94 / −1.82 |
+| concentrated reversal | −2.01 / −6.22 | −1.48 / −4.66 |
 
-Momentum is the instructive row: a genuine gross edge, and costs take 107% of it — it
-ends up a hair below break-even. On the chart the gap between the gross and net lines
-*is* the tax. Nothing here is a tradable strategy, and three years is too short to
-conclude much in either direction; the point is that the tool says so in its own output
-rather than leaving you to notice.
+Momentum is the instructive row twice over. It has a genuine gross edge that costs very
+nearly eat — and **its net Sharpe changes sign** between the two universes, +0.21 against
+−0.03. Nothing about the strategy changed; only how many names it could choose from.
+
+That is the honest headline for this whole project. A result that flips sign when the
+universe goes from 150 names to 300 is not a result, and three years is not enough sample
+to say otherwise. The tool is built to make that visible rather than to produce a number
+you could put in a deck.
 
 At 62 bps a round trip, most daily-rebalanced cross-sectional signals in Taiwan are dead
 before they start. The builder is designed to show you that in seconds.
