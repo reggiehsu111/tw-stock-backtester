@@ -16,7 +16,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from .sources import taifex
+from .sources import equities, taifex
+
+# datasets that come from the equity cross-section rather than TAIFEX
+EQUITY_DATASETS = ("equities",)
 
 DEFAULT_DIR = Path(os.environ.get("TWBT_CACHE", Path(__file__).resolve().parents[2] / "data" / "cache"))
 FIXTURE_DIR = Path(__file__).resolve().parents[2] / "data" / "fixture"
@@ -85,7 +88,10 @@ def update(name: str, start: date, end: date, root: Path | None = None,
     for a, b in todo:
         if verbose:
             print(f"  {name}: fetching {a}..{b}")
-        got = taifex.fetch_range(name, a, b, verbose=verbose)
+        if name in EQUITY_DATASETS:
+            got = equities.fetch_range(a, b, verbose=verbose)
+        else:
+            got = taifex.fetch_range(name, a, b, verbose=verbose)
         if verbose:
             print(f"  {name}: +{len(got):,} rows")
         if len(got):
