@@ -85,7 +85,7 @@ def update(name: str, start: date, end: date, root: Path | None = None,
     for a, b in todo:
         if verbose:
             print(f"  {name}: fetching {a}..{b}")
-        got = taifex.fetch_range(name, a, b)
+        got = taifex.fetch_range(name, a, b, verbose=verbose)
         if verbose:
             print(f"  {name}: +{len(got):,} rows")
         if len(got):

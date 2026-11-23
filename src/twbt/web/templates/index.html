@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Backtest results{% endblock %}
+{% block subtitle %}saved results{% endblock %}
+{% block content %}
+
+{% if not cards %}
+  <h2>Nothing saved yet</h2>
+  <p>Run a backtest and it will appear here:</p>
+  <p><code>twbt run --strategy institutional_flow</code></p>
+{% else %}
+  <h2>Results</h2>
+  <div class="cards">
+    {% for c in cards %}
+    <a class="card" href="/s/{{ c.name }}">
+      <h3>{{ c.name }}</h3>
+      <dl>
+        <dt>trades</dt><dd>{{ c.trades }}</dd>
+        <dt>net mean</dt><dd>{{ c.net_mean }} bps</dd>
+        <dt>net t</dt><dd>{{ c.net_t }}</dd>
+        <dt>Sharpe</dt><dd>{{ c.sharpe }}</dd>
+      </dl>
+      {% if c.fails %}
+        <div class="flag">{{ c.fails }} check{{ '' if c.fails == 1 else 's' }} failed</div>
+      {% endif %}
+    </a>
+    {% endfor %}
+  </div>
+
+  <h2>Reading these</h2>
+  <p class="note">
+    Both bundled strategies are demonstrations of the engine, not validated signals.
+    The checks that failed are shown on each page, in the strategy's own output,
+    because a backtester that only reports successes is not reporting anything.
+  </p>
+{% endif %}
+
+{% endblock %}

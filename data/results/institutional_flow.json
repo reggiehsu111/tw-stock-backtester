@@ -1,0 +1,48 @@
+{
+  "strategy": "institutional_flow",
+  "description": "Long when foreign positioning z >= +1.00 and dealer z <= -0.00, short on the mirror condition. Trailing window 250d, traded with a 1-session publication lag.",
+  "costs": "TXF (\u81fa\u80a1\u671f\u8ca8 (large)): spread 3.00 pts (x1.00 in / x1.00 out), fees 0.35 pts/side, round trip 3.70 pts",
+  "sessions": 698,
+  "start": "2024-01-02",
+  "end": "2026-11-20",
+  "n_trades": 36,
+  "net": {
+    "n": 36,
+    "mean": 8.028655102392186,
+    "t": 0.1175805642547539,
+    "sharpe": 0.31108893203272947,
+    "hit_rate": 0.5277777777777778,
+    "total": 289.03158368611867,
+    "max_drawdown": -2598.1205665217312,
+    "best": 1396.9060483659791,
+    "worst": -1097.4422234387605,
+    "by_year": {
+      "2024": 595.0900763283598,
+      "2025": -35.25488279563828,
+      "2026": -270.80360984660274
+    }
+  },
+  "gross": {
+    "n": 36,
+    "mean": 9.301620214639037,
+    "t": 0.13621287929724157,
+    "sharpe": 0.36038540398455976,
+    "hit_rate": 0.5277777777777778,
+    "total": 334.8583277270053,
+    "max_drawdown": -2575.995774148429,
+    "best": 1397.7078665346764,
+    "worst": -1096.6107732985529,
+    "by_year": {
+      "2024": 609.6195693213339,
+      "2025": -17.424519738720193,
+      "2026": -257.3367218556083
+    }
+  },
+  "verdict": [
+    "Consistent in sign across TXF, MXF, TMF.",
+    "Survives every spread assumption tested (up to 3.0x).",
+    "Walk-forward: 0/1 out-of-sample years positive, 6 trades total.",
+    "Walk-forward trade count is too low to conclude anything."
+  ],
+  "generated": "2026-11-23T10:17:10"
+}

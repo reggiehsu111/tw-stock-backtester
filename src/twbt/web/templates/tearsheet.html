@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} — tearsheet{% endblock %}
+{% block subtitle %}{{ name }}{% endblock %}
+{% block content %}
+
+<h2>Verdict</h2>
+<ul class="verdict">
+  {% for v in verdict %}
+    <li class="{{ 'fail' if v.fail else '' }}">
+      {%- if v.fail %}<strong>{{ v.text }}</strong>{% else %}{{ v.text }}{% endif -%}
+    </li>
+  {% endfor %}
+</ul>
+
+<h2>Cumulative P&amp;L</h2>
+<figure class="figure">{{ chart_equity | safe }}
+  <figcaption>The gap between the two lines is the cost. A strategy whose gross and
+  net curves diverge sharply is paying for its turnover.</figcaption>
+</figure>
+
+<h2>By year</h2>
+<figure class="figure">{{ chart_by_year | safe }}
+  <figcaption>One line per calendar year, labelled with that year's Sharpe; the heavy
+  dashed line is the average path. This is where a result carried by a single good
+  year becomes obvious.</figcaption>
+</figure>
+
+<h2>Long / short decomposition</h2>
+<figure class="figure">{{ chart_decomp | safe }}
+  <figcaption>A result that comes entirely from one side is usually a market-direction
+  bet wearing a signal's clothes.</figcaption>
+</figure>
+
+<h2>Cost sensitivity</h2>
+<figure class="figure">{{ chart_cost | safe }}
+  <figcaption>Net t-stat as the spread assumption is scaled. If the line crosses zero
+  at or below 1.5x, the realistic cost estimate and a mildly pessimistic one disagree
+  about whether the strategy exists.</figcaption>
+</figure>
+
+<h2>Statistics</h2>
+<div class="tablewrap">
+<table>
+  <tbody>
+    {% for label, value in stats_rows %}
+    <tr><td>{{ label }}</td><td>{{ value }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{% if consistency %}
+<h2>Across sibling contracts</h2>
+<div class="tablewrap">
+<table>
+  <thead><tr>{% for h in consistency[0] %}<th>{{ h }}</th>{% endfor %}</tr></thead>
+  <tbody>
+    {% for row in consistency[1] %}<tr>{% for c in row %}<td>{{ c }}</td>{% endfor %}</tr>{% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="note">Same index, same signal, different cost. A difference in magnitude is a
+statement about tradability; a difference in <em>sign</em> cannot be explained by cost
+and means the result is noise.</p>
+{% endif %}
+
+{% if wf_table %}
+<h2>Walk-forward</h2>
+<div class="tablewrap">
+<table>
+  <thead><tr>{% for h in wf_table[0] %}<th>{{ h }}</th>{% endfor %}</tr></thead>
+  <tbody>
+    {% for row in wf_table[1] %}<tr>{% for c in row %}<td>{{ c }}</td>{% endfor %}</tr>{% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="note">Parameters for each year were chosen using only data from before it.
+Check the trade count before reading the years: five positive years built from eleven
+trades is not five pieces of evidence.</p>
+{% endif %}
+
+{% if sensitivity %}
+<h2>Cost sensitivity detail</h2>
+<div class="tablewrap">
+<table>
+  <thead><tr>{% for h in sensitivity[0] %}<th>{{ h }}</th>{% endfor %}</tr></thead>
+  <tbody>
+    {% for row in sensitivity[1] %}<tr>{% for c in row %}<td>{{ c }}</td>{% endfor %}</tr>{% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+
+{% endblock %}

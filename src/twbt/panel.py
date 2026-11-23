@@ -30,7 +30,14 @@ from . import cache
 # that appears in older documentation and in some internal tables.
 PRODUCT_TXF = "臺股期貨"
 IDENTITY = {"dealer": "自營商", "trust": "投信", "foreign": "外資及陸資"}
-TRADER_ALL = "所有契約"
+
+# large_trader encodes two of its columns as NUMBERS, not labels, which is not
+# obvious from the Chinese headers and produces an empty join if you filter on text.
+EXPIRY_ALL_MONTHS = 999999      # every contract month combined
+EXPIRY_WEEKLIES = 666666        # the weekly contracts only
+TRADER_ALL = 0                  # 所有交易人
+TRADER_SPECIFIC = 1             # 特定法人
+LT_PRODUCT_TX = "TX"            # 臺股期貨(TX+MTX/4+TMF/20), already TAIEX-equivalent
 
 MIN_WINDOW = 120          # a trailing stat needs this much history before it is used
 DEFAULT_WINDOW = 250      # ~one year of sessions
@@ -132,26 +139,46 @@ def _majors_wide(maj: pd.DataFrame) -> pd.DataFrame:
 
 
 def _trader_wide(lt: pd.DataFrame) -> pd.DataFrame:
-    """大額交易人 -> the all-contracts concentration measures."""
+    """大額交易人 -> daily concentration measures for the TAIEX futures complex.
+
+    Three filters, each of which silently empties the frame if written as a text
+    match, because TAIFEX encodes these as numbers:
+
+        product    "TX"    -- already the combined TX + MTX/4 + TMF/20 series
+        expiry     999999  -- all contract months (666666 is weeklies only)
+        trader_type 0      -- all large traders (1 is specific institutions only)
+
+    ``top5_net_frac`` is the top five's net position as a share of total open
+    interest, and ``top5_conc`` their gross share. Both are already normalised by
+    open interest, so unlike raw lot counts they are comparable across years.
+    """
     df = lt.copy()
-    if "trader_type" in df.columns:
-        allc = df["trader_type"].astype(str).str.contains("所有|全部", na=False)
-        if allc.any():
-            df = df[allc]
+    for c in ("expiry", "trader_type", "top5_buy", "top5_sell",
+              "top10_buy", "top10_sell", "total_oi"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
     if "product" in df.columns:
-        txf = df["product"].astype(str).str.contains("TX|臺股期貨", regex=True, na=False)
-        if txf.any():
-            df = df[txf]
+        df = df[df["product"].astype(str).str.strip() == LT_PRODUCT_TX]
+    if "expiry" in df.columns:
+        df = df[df["expiry"] == EXPIRY_ALL_MONTHS]
+    if "trader_type" in df.columns:
+        df = df[df["trader_type"] == TRADER_ALL]
+
     cols = [c for c in ("top5_buy", "top5_sell", "top10_buy", "top10_sell", "total_oi")
             if c in df.columns]
     if df.empty or not cols:
         return pd.DataFrame()
-    g = df.groupby("date")[cols].sum()
+
+    g = df.groupby("date")[cols].last().sort_index()
     if {"top5_buy", "top5_sell", "total_oi"} <= set(cols):
         oi = g["total_oi"].where(g["total_oi"] > 0)
         g["top5_net_frac"] = (g["top5_buy"] - g["top5_sell"]) / oi
         g["top5_conc"] = (g["top5_buy"] + g["top5_sell"]) / (2 * oi)
-    return g.sort_index()
+    if {"top10_buy", "top10_sell", "total_oi"} <= set(cols):
+        oi = g["total_oi"].where(g["total_oi"] > 0)
+        g["top10_net_frac"] = (g["top10_buy"] - g["top10_sell"]) / oi
+    return g
 
 
 def build(root=None, fixture: bool = False) -> pd.DataFrame:

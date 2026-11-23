@@ -1,0 +1,48 @@
+{
+  "strategy": "momentum",
+  "description": "Long when the trailing 20-session return has z >= +1.00, short on the mirror, held 20 sessions. Traded with a 1-session lag.",
+  "costs": "TXF (\u81fa\u80a1\u671f\u8ca8 (large)): spread 3.00 pts (x1.00 in / x1.00 out), fees 0.35 pts/side, round trip 3.70 pts",
+  "sessions": 698,
+  "start": "2024-01-02",
+  "end": "2026-11-20",
+  "n_trades": 16,
+  "net": {
+    "n": 16,
+    "mean": 295.61269354468857,
+    "t": 1.0154207002364644,
+    "sharpe": 0.6810250869209127,
+    "hit_rate": 0.5625,
+    "total": 4729.803096715017,
+    "max_drawdown": -1870.4048567236928,
+    "best": 2986.535378292894,
+    "worst": -1411.8233157352847,
+    "by_year": {
+      "2024": -3282.2281724589775,
+      "2025": 2099.867459741816,
+      "2026": 5912.163809432179
+    }
+  },
+  "gross": {
+    "n": 16,
+    "mean": 297.83023437299454,
+    "t": 1.0233910701294597,
+    "sharpe": 0.6863706760426481,
+    "hit_rate": 0.5625,
+    "total": 4765.283749967913,
+    "max_drawdown": -1857.9092071239502,
+    "best": 2988.3823829690245,
+    "worst": -1409.2408572856984,
+    "by_year": {
+      "2024": -3267.1500644096486,
+      "2025": 2110.803246496498,
+      "2026": 5921.630567881062
+    }
+  },
+  "verdict": [
+    "Consistent in sign across TXF, MXF, TMF.",
+    "Survives every spread assumption tested (up to 3.0x).",
+    "Walk-forward: 0/1 out-of-sample years positive, 1 trades total.",
+    "Walk-forward trade count is too low to conclude anything."
+  ],
+  "generated": "2026-11-23T10:18:14"
+}

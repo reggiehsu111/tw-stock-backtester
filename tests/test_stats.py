@@ -161,3 +161,37 @@ def test_sandwich_does_not_allocate_an_n_by_n_matrix():
     y = pd.Series(rng.normal(size=n))
     res = stats.regress(y, x, overlap=5)
     assert np.isfinite(res.t_ols) and np.isfinite(res.t_nw)
+
+
+def test_sharpe_is_annualised_by_observed_frequency_not_by_assumption():
+    """A strategy that trades 16 times in 3 years must not report a daily Sharpe.
+
+    Hardcoding sqrt(252) claims 252 independent observations a year. Sixteen
+    trades over three years is five. The symptom is a Sharpe of 4 printed beside
+    a t-statistic of 1, which cannot both be true, and it is how an annualisation
+    artifact gets mistaken for an edge.
+    """
+    entries = pd.to_datetime(pd.date_range("2024-01-02", "2026-11-20", periods=16))
+    trades = pd.Series(np.random.default_rng(1).normal(300, 1100, 16), index=entries)
+
+    p = stats.performance(trades)
+    naive = stats.performance(trades, periods_per_year=252)
+
+    assert stats.observed_frequency(trades) < 10          # ~5.5 trades a year
+    assert abs(p.sharpe) < abs(naive.sharpe) / 2          # the artifact is large
+    # t and Sharpe must now tell the same story
+    assert np.sign(p.t) == np.sign(p.sharpe)
+    assert abs(p.sharpe) < abs(p.t) * 2
+
+
+def test_daily_series_still_annualises_near_252():
+    idx = pd.bdate_range("2020-01-01", periods=1000)
+    d = pd.Series(np.random.default_rng(0).normal(0, 10, 1000), index=idx)
+    assert 240 < stats.observed_frequency(d) < 270
+
+
+def test_observed_frequency_falls_back_without_usable_dates():
+    s = pd.Series(np.arange(100, dtype=float))            # RangeIndex
+    assert stats.observed_frequency(s) == 252
+    short = pd.Series([1.0, 2.0], index=pd.to_datetime(["2024-01-01", "2024-01-05"]))
+    assert stats.observed_frequency(short) == 252         # span too short to measure

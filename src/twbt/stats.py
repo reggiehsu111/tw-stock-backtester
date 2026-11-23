@@ -179,14 +179,38 @@ class Performance:
         return d
 
 
-def performance(pnl, periods_per_year: int = TRADING_DAYS) -> Performance:
-    """Headline statistics for a P&L series indexed by date."""
+def observed_frequency(s: pd.Series, default: int = TRADING_DAYS) -> float:
+    """Observations per year, measured from the index rather than assumed.
+
+    This exists because annualising with a hardcoded sqrt(252) is how a strategy
+    that trades sixteen times in three years reports a Sharpe of 4.0 beside a
+    t-statistic of 1.0. The two cannot both be true: sqrt(252) claims 252
+    independent observations a year, and there were five.
+
+    Falls back to ``default`` for a series with no usable dates or too short a
+    span to measure.
+    """
+    if not isinstance(s.index, pd.DatetimeIndex) or len(s) < 2:
+        return float(default)
+    span = (s.index.max() - s.index.min()).days
+    if span < 60:
+        return float(default)
+    return len(s) / (span / 365.25)
+
+
+def performance(pnl, periods_per_year: int | None = None) -> Performance:
+    """Headline statistics for a P&L series indexed by date.
+
+    ``periods_per_year`` is measured from the index by default. Pass a number only
+    when you know the series' frequency better than its own timestamps do.
+    """
     s = pd.Series(pnl).dropna()
     if len(s) < 2:
         return Performance(len(s), *([np.nan] * 8))
+    ppy = observed_frequency(s) if periods_per_year is None else float(periods_per_year)
     sd = s.std(ddof=1)
     t = s.mean() / (sd / np.sqrt(len(s))) if sd > 0 else np.nan
-    sharpe = s.mean() / sd * np.sqrt(periods_per_year) if sd > 0 else np.nan
+    sharpe = s.mean() / sd * np.sqrt(ppy) if sd > 0 else np.nan
     eq = s.cumsum()
     dd = float((eq - eq.cummax()).min())
     by_year = {}
