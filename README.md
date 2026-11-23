@@ -55,8 +55,12 @@ because it is one request per venue per trading day:
 
 ```bash
 twbt fetch-equities --start 2024-01-01     # ~30 minutes for three years, cached
-twbt web                                   # -> http://127.0.0.1:8000/build
+twbt web                                   # -> http://127.0.0.1:8000
 ```
+
+The page opens on a worked example — 12-1 momentum, already run, with all its plots and a
+verdict that says it loses money after costs. That is a more honest landing page than a
+blank form or a curated winner.
 
 **Offline?** A committed fixture ships in `data/fixture/` — three years of futures data
 plus a 150-name equity cross-section, about 6 MB. Skip the fetches and add `--fixture`;
@@ -115,8 +119,9 @@ point-in-time liquid universe of 300.
 Two ways to build a signal, and they share one representation.
 
 **Blocks.** Drag operators from the palette onto the canvas, drag the boxes to reorder,
-edit window parameters in place. Double-click a palette entry to append it. The canvas
-draws a linear chain, which covers most signals.
+edit window parameters in place. Double-click a palette entry to append it. Hovering any
+operator shows its signature and a one-line description of what it does. The canvas draws
+a linear chain, which covers most signals.
 
 **Code.** Type the expression directly:
 

@@ -345,20 +345,36 @@ class Op:
     """One operator as the builder sees it: name, params, and a description."""
 
     def __init__(self, fn, group, params=(), doc="", lookahead=False,
-                 matrix_args=1):
+                 matrix_args=1, hint=""):
         self.fn = fn
         self.name = fn.__name__
         self.group = group
         self.params = params           # (param_name, type, default) before the matrix
         self.doc = doc or (fn.__doc__ or "").strip().split("\n")[0]
+        # A plain-English line written for the palette tooltip. The docstring is
+        # written for someone reading the source; this is written for someone
+        # deciding whether to drag the block, which is a different sentence.
+        self.hint = hint or self.doc
         self.lookahead = lookahead
         # How many MATRIX inputs this operator takes. Anything above one cannot
         # appear on the block canvas, which draws a linear chain, but is
         # perfectly usable in the expression editor.
         self.matrix_args = matrix_args
 
+    @property
+    def signature(self) -> str:
+        """The call as you would type it, read off the real function."""
+        from inspect import Parameter, signature
+        ps = [p for p in signature(self.fn).parameters.values()
+              if p.kind in (Parameter.POSITIONAL_ONLY,
+                            Parameter.POSITIONAL_OR_KEYWORD)]
+        parts = [p.name if p.default is Parameter.empty
+                 else f"{p.name}={p.default!r}" for p in ps]
+        return f"{self.name}({', '.join(parts)})"
+
     def as_dict(self) -> dict:
         return {"name": self.name, "group": self.group, "doc": self.doc,
+                "hint": self.hint, "signature": self.signature,
                 "lookahead": self.lookahead, "matrix_args": self.matrix_args,
                 "params": [{"name": n, "type": t.__name__, "default": d}
                            for n, t, d in self.params]}
@@ -370,43 +386,47 @@ _EW = "elementwise"
 _PC = "portfolio"
 
 ALL_OPS: dict[str, Op] = {o.name: o for o in [
-    Op(Lag, _TS, [("n", int, 1)]),
-    Op(Lead, _TS, [("n", int, 1)], lookahead=True),
-    Op(InstMean, _TS, [("n", int, 20)]),
-    Op(InstStdev, _TS, [("n", int, 20)]),
-    Op(InstSkew, _TS, [("n", int, 60)]),
-    Op(InstCount, _TS, [("n", int, 20)]),
-    Op(InstSum, _TS, [("n", int, 20)]),
-    Op(InstRank, _TS, [("n", int, 60)]),
-    Op(InstZscore, _TS, [("n", int, 60)]),
-    Op(ForwardFill, _TS, [("limit", int, 5)]),
-    Op(Returns, _TS),
-    Op(LogReturns, _TS),
+    Op(Lag, _TS, [("n", int, 1)], hint='Push the signal n days later. Use it to make a signal tradable, or to test whether the edge survives delay.'),
+    Op(Lead, _TS, [("n", int, 1)], lookahead=True, hint='Look n days AHEAD. Only for building the thing you are predicting — never inside a signal.'),
+    Op(InstMean, _TS, [("n", int, 20)], hint="Average of each name's own last n days. Smooths a noisy input."),
+    Op(InstStdev, _TS, [("n", int, 20)], hint="Each name's own volatility over the last n days. The usual denominator for risk-scaling."),
+    Op(InstSkew, _TS, [("n", int, 60)], hint="Skewness of each name's last n days. Lottery-like names score high."),
+    Op(InstCount, _TS, [("n", int, 20)], hint='How many of the last n days actually had data. Use it to drop names with thin history.'),
+    Op(InstSum, _TS, [("n", int, 20)], hint="Total over each name's last n days. InstSum(5, Returns(px)) is last week's return."),
+    Op(InstRank, _TS, [("n", int, 60)], hint="Where today sits inside this name's OWN last n days, 0 to 1. Asks 'unusual for this stock?'"),
+    Op(InstZscore, _TS, [("n", int, 60)], hint='How many of its own standard deviations today is from its own mean. Comparable across names.'),
+    Op(ForwardFill, _TS, [("limit", int, 5)], hint='Carry the last value forward, at most n days. Bounded so a dead name does not become a permanent position.'),
+    Op(Returns, _TS, hint='Day-over-day percentage change. The usual starting point.'),
+    Op(LogReturns, _TS, hint='Log change. Adds up cleanly over time, unlike plain returns.'),
 
-    Op(Rank, _XS),
-    Op(Demean, _XS),
-    Op(Zscore, _XS),
-    Op(Winsorize, _XS, [("lo_q", float, 0.01), ("hi_q", float, 0.99)]),
+    Op(Rank, _XS, hint='Rank every name against the OTHER NAMES on the same day, 0 to 1. The cross-sectional workhorse.'),
+    Op(Demean, _XS, hint="Subtract the day's average across names. Removes the market move, leaving the relative one."),
+    Op(Zscore, _XS, hint='Standardise across names within each day. Like Rank but keeps magnitude, so outliers still shout.'),
+    Op(Winsorize, _XS, [("lo_q", float, 0.01), ("hi_q", float, 0.99)], hint="Clip each day's cross-section at the given quantiles. Tames outliers without deleting them."),
 
-    Op(Abs, _EW), Op(Log, _EW), Op(Sqrt, _EW), Op(Sign, _EW), Op(Neg, _EW),
-    Op(Clip, _EW, [("lo", float, -3.0), ("hi", float, 3.0)]),
-    Op(Finite, _EW),
+    Op(Abs, _EW, hint='Drop the sign, keep the size.'),
+    Op(Log, _EW, hint='Natural log. Compresses a long-tailed input like turnover. Non-positive values become blank.'),
+    Op(Sqrt, _EW, hint='Square root. A gentler compression than Log.'),
+    Op(Sign, _EW, hint='Reduce to -1, 0 or +1. Throws away magnitude, which is often what you want.'),
+    Op(Neg, _EW, hint='Drop the sign, keep the size.'),
+    Op(Clip, _EW, [("lo", float, -3.0), ("hi", float, 3.0)], hint='Clamp to fixed numeric bounds. Unlike Winsorize these are absolute, not quantiles.'),
+    Op(Finite, _EW, hint='Turn infinities into blanks. Put it after a division.'),
 
-    Op(LongShortBalance, _PC),
-    Op(GrossScale, _PC),
-    Op(TopN, _PC, [("n", int, 50)]),
+    Op(LongShortBalance, _PC, hint='Shift each day so longs and shorts are equal. The book stops being a bet on market direction.'),
+    Op(GrossScale, _PC, hint='Scale each day so the position sizes add to a constant. P&L then reflects the view, not the book size.'),
+    Op(TopN, _PC, [("n", int, 50)], hint='Keep only the n best and n worst names each day. Concentrates the book — higher mean, much higher variance.'),
 
     # Two-matrix operators. Expression editor only -- a linear chain has one
     # input, so these cannot be a block on the canvas.
-    Op(Div, _EW, matrix_args=2),
-    Op(And, _EW, matrix_args=2),
-    Op(Or, _EW, matrix_args=2),
-    Op(Mask, _EW, matrix_args=2),
-    Op(Neutralize, _XS, matrix_args=2),
-    Op(DemeanByGroup, _XS, matrix_args=2),
-    Op(GroupRank, _XS, matrix_args=2),
-    Op(InstBeta, _TS, [("n", int, 60)], matrix_args=2),
-    Op(Pow, _EW, [("p", float, 2.0)]),
+    Op(Div, _EW, matrix_args=2, hint='Divide one matrix by another, blanking a zero denominator rather than returning infinity.'),
+    Op(And, _EW, matrix_args=2, hint='1 where BOTH inputs are non-zero. For combining two filters.'),
+    Op(Or, _EW, matrix_args=2, hint='1 where EITHER input is non-zero.'),
+    Op(Mask, _EW, matrix_args=2, hint='Keep the first matrix only where the second is non-zero. Blank elsewhere.'),
+    Op(Neutralize, _XS, matrix_args=2, hint="Regress the signal on a factor each day and keep the residual. Answers 'is anything left after the obvious explanation?'"),
+    Op(DemeanByGroup, _XS, matrix_args=2, hint="Subtract the group average instead of the market average. Separates 'cheap stock' from 'cheap sector'."),
+    Op(GroupRank, _XS, matrix_args=2, hint="Rank within each name's group rather than the whole market."),
+    Op(InstBeta, _TS, [("n", int, 60)], matrix_args=2, hint="Each name's trailing beta to the market. Pass a matrix as the benchmark; its row-mean is the market."),
+    Op(Pow, _EW, [("p", float, 2.0)], hint='Raise to a power. Above 1 emphasises extremes, below 1 flattens them.'),
 ]}
 
 # Operators whose first argument is the matrix rather than a parameter.

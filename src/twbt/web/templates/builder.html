@@ -4,9 +4,9 @@
 {% block content %}
 
 {% if load_error %}
-  <h2>Panel unavailable</h2>
+  <h2>{{ T('panel_unavailable') }}</h2>
   <p class="note">{{ load_error }}</p>
-  <p>Fetch the equity cross-section first:</p>
+  <p>{{ T('fetch_first') }}</p>
   <p><code>twbt fetch-equities --start 2024-01-01</code></p>
 {% else %}
 
@@ -21,16 +21,17 @@
 
   <!-- ---------------- palette ---------------- -->
   <aside class="palette-col">
-    <h2>Operators</h2>
-    <p class="hint">Drag onto the canvas, or double-click to append.</p>
-    <input type="search" id="opsearch" class="ctl" placeholder="filter…" autocomplete="off">
+    <h2>{{ T('operators') }}</h2>
+    <p class="hint">{{ T('drag_hint') }}</p>
+    <input type="search" id="opsearch" class="ctl" placeholder="{{ T('filter') }}" autocomplete="off">
     {% for group in ['time series','cross section','elementwise','portfolio'] %}
       <div class="opgroup" data-group="{{ group }}">
         <h3>{{ group }}</h3>
         <div class="palette">
         {% for op in catalogue %}{% if op.group == group and not op.lookahead %}
           <div class="op" draggable="true" data-op="{{ op.name }}"
-               data-params='{{ op.params|tojson }}' title="{{ op.doc }}">
+               data-params='{{ op.params|tojson }}'
+               data-sig="{{ op.signature }}" data-hint="{{ op.hint }}">
             <span class="opname">{{ op.name }}</span>
             {% if op.params %}<span class="oparg">{{ op.params|map(attribute='name')|join(', ') }}</span>{% endif %}
           </div>
@@ -39,24 +40,22 @@
       </div>
     {% endfor %}
     <p class="hint footnote">
-      {{ all_ops|length - catalogue|length }} more operators take two matrices
-      (<code>Div</code>, <code>Neutralize</code>, <code>Mask</code>…). They need the
-      code tab — a chain of boxes has only one input.
+      {{ all_ops|length - catalogue|length }} {{ T('two_matrix_note') }}
     </p>
   </aside>
 
   <!-- ---------------- canvas / code ---------------- -->
   <section class="canvas-col">
     <div class="tabs-row">
-      <button type="button" class="tab on" data-tab="blocks">Blocks</button>
-      <button type="button" class="tab" data-tab="code">Code</button>
+      <button type="button" class="tab on" data-tab="blocks">{{ T('blocks') }}</button>
+      <button type="button" class="tab" data-tab="code">{{ T('code') }}</button>
       <span class="spacer"></span>
-      <button type="button" id="run" class="primary">Run backtest</button>
+      <button type="button" id="run" class="primary">{{ T('run') }}</button>
     </div>
 
     <!-- blocks -->
     <div id="pane-blocks" class="pane">
-      <label class="srcrow">source
+      <label class="srcrow">{{ T('source') }}
         <select id="source" class="ctl">
           {% for key, desc in sources.items() %}
             <option value="{{ key }}" {% if key=='returns' %}selected{% endif %}>{{ key }} — {{ desc }}</option>
@@ -64,10 +63,10 @@
         </select>
       </label>
       <div id="canvas" class="canvas">
-        <div class="dropmsg">Drag operators here</div>
+        <div class="dropmsg">{{ T('drop_here') }}</div>
       </div>
       <div class="canvas-actions">
-        <button type="button" id="clear">Clear</button>
+        <button type="button" id="clear">{{ T('clear') }}</button>
         <span class="hint" id="blockhint"></span>
       </div>
     </div>
@@ -80,14 +79,13 @@
       </div>
       <div id="codestatus" class="codestatus"></div>
       <details class="refbox">
-        <summary>What you can write</summary>
-        <p class="hint">Sources: {% for k in sources %}<code>{{ k }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+        <summary>{{ T('what_you_write') }}</summary>
+        <p class="hint">{{ T('sources_are') }}: {% for k in sources %}<code>{{ k }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
         — plus <code>px</code> for close.</p>
-        <p class="hint">Arithmetic <code>+ - * /</code> and parentheses work on matrices,
-        so <code>Returns(px) / InstStdev(20, Returns(px))</code> is a volatility-scaled return.</p>
+        <p class="hint">{{ T('arith_note') }}</p>
         <div class="opref">
         {% for op in all_ops %}{% if not op.lookahead %}
-          <code class="refop" title="{{ op.doc }}">{{ op.name }}</code>
+          <code class="refop" data-sig="{{ op.signature }}" data-hint="{{ op.hint }}">{{ op.name }}</code>
         {% endif %}{% endfor %}
         </div>
       </details>
@@ -98,50 +96,45 @@
 
   <!-- ---------------- settings ---------------- -->
   <aside class="settings-col">
-    <h2>Settings</h2>
+    <h2>{{ T('settings') }}</h2>
     <div class="settings">
-      <label>execution lag
+      <label>{{ T('exec_lag') }}
         <select id="exec_shift" class="ctl">
-          <option value="1" selected>1 session (tradable)</option>
-          <option value="2">2 sessions</option>
-          <option value="5">5 sessions</option>
-          <option value="0">0 — same close (not tradable)</option>
+          <option value="1" selected>{{ T('lag_1') }}</option>
+          <option value="2">2 {{ T('lag_n') }}</option>
+          <option value="5">5 {{ T('lag_n') }}</option>
+          <option value="0">{{ T('lag_0') }}</option>
         </select>
       </label>
-      <label>手續費 each side
-        <select id="brokerage" class="ctl">
-          <option value="0.0006" selected>0.060% (typical)</option>
-          <option value="0.001425">0.1425% (list)</option>
-          <option value="0.0003">0.030% (deep discount)</option>
-          <option value="0">0% (comparison only)</option>
-        </select>
-      </label>
-      <label>half spread
-        <select id="half_spread" class="ctl">
-          <option value="0.0010" selected>0.10%</option>
-          <option value="0.0005">0.05%</option>
-          <option value="0.0020">0.20%</option>
-          <option value="0">0%</option>
-        </select>
-      </label>
+
+      <div class="costgrid">
+        <label>{{ T('brokerage') }}<span class="unit">{{ T('bps') }}</span>
+          <input type="number" id="brokerage" class="ctl num" step="0.5" min="0"
+                 value="{{ '%.1f'|format(defaults.brokerage) }}"></label>
+        <label>{{ T('tax') }}<span class="unit">{{ T('bps') }}</span>
+          <input type="number" id="tax_sell" class="ctl num" step="1" min="0"
+                 value="{{ '%.1f'|format(defaults.tax_sell) }}"></label>
+        <label>{{ T('spread') }}<span class="unit">{{ T('bps') }}</span>
+          <input type="number" id="half_spread" class="ctl num" step="1" min="0"
+                 value="{{ '%.1f'|format(defaults.half_spread) }}"></label>
+        <label>{{ T('borrow') }}<span class="unit">{{ T('pct_yr') }}</span>
+          <input type="number" id="borrow_annual" class="ctl num" step="0.25" min="0"
+                 value="{{ '%.2f'|format(defaults.borrow_annual) }}"></label>
+      </div>
+
+      <div class="costsum">
+        <span>{{ T('round_trip') }}</span><strong id="rt">—</strong>
+        <button type="button" id="resetcosts" class="linkish">{{ T('reset_costs') }}</button>
+      </div>
+      <p class="hint">{{ T('tax_note') }}</p>
+
       <label class="check"><input type="checkbox" id="tradability" checked>
-        漲停/跌停 + 平盤下不得放空</label>
+        {{ T('tradability') }}</label>
       <label class="check"><input type="checkbox" id="day_trade">
-        當沖 tax (0.15%)</label>
+        {{ T('day_trade') }}</label>
     </div>
 
-    <details class="costbox" open>
-      <summary>Round-trip cost</summary>
-      <table><tbody>
-      {% for r in cost_rows %}
-        <tr><td>{{ r.component }}</td><td>{{ "%.1f"|format(r.bps) }}</td></tr>
-      {% endfor %}
-      </tbody></table>
-      <p class="hint">證交稅 is sell-side only and statutory — the controls above
-      do not move it.</p>
-    </details>
-
-    <h2>Presets</h2>
+    <h2>{{ T('presets') }}</h2>
     <div class="presets">
       {% for name, p in presets.items() %}
         <button type="button" class="preset" data-preset="{{ name }}">
@@ -153,21 +146,65 @@
 
 <div id="status" class="status" hidden></div>
 <div id="results" hidden>
-  <h2>Verdict</h2>
+  <h2>{{ T('verdict') }}</h2>
   <ul class="verdict" id="verdict"></ul>
-  <h2>Cumulative P&amp;L</h2><div id="c_equity" class="figure"></div>
-  <h2>By year</h2><div id="c_by_year" class="figure"></div>
-  <h2>Long / short decomposition</h2><div id="c_decomp" class="figure"></div>
-  <h2>Cumulative cost</h2><div id="c_turnover" class="figure"></div>
-  <h2>Statistics</h2>
-  <div class="tablewrap"><table><tbody id="stats"></tbody></table></div>
-  <h2>By year, in numbers</h2>
-  <div class="tablewrap"><table>
-    <thead><tr><th>year</th><th>gross</th><th>net</th><th>Sharpe</th><th>hit</th></tr></thead>
-    <tbody id="yeartbl"></tbody></table></div>
+
+  <h2>{{ T('performance') }}</h2>
+  <div class="grid4">
+    <figure class="fig"><div id="c_equity"></div>
+      <figcaption>{{ CAP('equity') }}</figcaption></figure>
+    <figure class="fig"><div id="c_decomp"></div>
+      <figcaption>{{ CAP('decomp') }}</figcaption></figure>
+    <figure class="fig"><div id="c_by_year"></div>
+      <figcaption>{{ CAP('by_year') }}</figcaption></figure>
+    <figure class="fig"><div id="c_avg_path"></div>
+      <figcaption>{{ CAP('avg_path') }}</figcaption></figure>
+  </div>
+
+  <h2>{{ T('is_it_real') }}</h2>
+  <div class="grid4">
+    <figure class="fig"><div id="c_lag_decay"></div>
+      <figcaption>{{ CAP('lag_decay') }}</figcaption></figure>
+    <figure class="fig"><div id="c_buckets"></div>
+      <figcaption>{{ CAP('buckets') }}</figcaption></figure>
+    <figure class="fig"><div id="c_drawdown"></div>
+      <figcaption>{{ CAP('drawdown') }}</figcaption></figure>
+    <figure class="fig"><div id="c_boards"></div>
+      <figcaption>{{ CAP('boards') }}</figcaption></figure>
+  </div>
+
+  <h2>{{ T('what_it_costs') }}</h2>
+  <div class="grid4">
+    <figure class="fig"><div id="c_cost"></div>
+      <figcaption>{{ CAP('cost') }}</figcaption></figure>
+    <figure class="fig"><div id="c_turnover"></div>
+      <figcaption>{{ CAP('turnover') }}</figcaption></figure>
+    <figure class="fig"><div id="c_counts"></div>
+      <figcaption>{{ CAP('counts') }}</figcaption></figure>
+    <figure class="fig"><div id="c_limit_drag"></div>
+      <figcaption>{{ CAP('limit_drag') }}</figcaption></figure>
+  </div>
+
+  <h2>{{ T('tradability_h') }}</h2>
+  <div class="grid2">
+    <figure class="fig"><div id="c_blocked"></div>
+      <figcaption>{{ CAP('blocked') }}</figcaption></figure>
+    <figure class="fig"><div id="c_untraded"></div>
+      <figcaption>{{ CAP('untraded') }}</figcaption></figure>
+  </div>
+
+  <h2>{{ T('statistics') }}</h2>
+  <div class="twocol">
+    <div class="tablewrap"><table><tbody id="stats"></tbody></table></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>{{ T("year") }}</th><th>{{ T("gross") }}</th><th>{{ T("net") }}</th><th>{{ T("sharpe") }}</th><th>{{ T("hit") }}</th></tr></thead>
+      <tbody id="yeartbl"></tbody></table></div>
+  </div>
 </div>
 
+<div id="tip" class="tip" hidden></div>
 <script id="presetdata" type="application/json">{{ presets|tojson }}</script>
-<script src="static/builder.js"></script>
+<script id="cfg" type="application/json">{{ cfg|tojson }}</script>
+<script src="static/builder.js?v=3"></script>
 {% endif %}
 {% endblock %}

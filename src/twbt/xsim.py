@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from . import xcosts
+from . import i18n, xcosts
 from .ops import GrossScale
 
 TRADING_DAYS = 252
@@ -90,6 +90,23 @@ class XSimResult:
     exec_shift: int
     notes: list[str] = field(default_factory=list)
 
+    # diagnostics. `raw_gross` is the P&L of the book you INTENDED, before the
+    # tradability rules took it away, so the gap between it and `gross` is the
+    # cost of 漲停/跌停 and 平盤下不得放空 -- a number usually left unmeasured.
+    raw_gross: pd.Series | None = None
+    long_count: pd.Series | None = None
+    short_count: pd.Series | None = None
+    blocked: dict = field(default_factory=dict)
+    signal: pd.DataFrame | None = None
+    returns: pd.DataFrame | None = None
+
+    @property
+    def limit_drag(self) -> pd.Series:
+        """Daily P&L lost to tradability rules."""
+        if self.raw_gross is None:
+            return pd.Series(0.0, index=self.gross.index)
+        return self.raw_gross - self.gross
+
     # ---- headline statistics -------------------------------------------- #
     @property
     def sharpe(self) -> float: return Sharpe(self.net)
@@ -141,38 +158,45 @@ class XSimResult:
             "days": int(len(self.net)), "avg_names": float(self.coverage.mean()),
         }
 
-    def verdict(self) -> list[str]:
-        """Plain-language findings, written to be unflattering where true."""
-        out = list(self.notes)
+    def verdict(self, lang: str = "en") -> list[str]:
+        """Plain-language findings, written to be unflattering where true.
+
+        Takes a language because these sentences are the most-read output on the
+        page, and a tool that reports its own failures only in English is less
+        useful to the people who most need to read them.
+        """
+        def T(key, **kw):
+            return i18n.t(i18n.VERDICT, key, lang).format(**kw)
+
+        out = [n if not isinstance(n, tuple) else T(n[0], **n[1])
+               for n in self.notes]
+
         if self.exec_shift == 0:
-            out.append("SAME-CLOSE EXECUTION: this is not tradable. A signal from "
-                       "today's close cannot be executed at today's close.")
-        if self.gross.mean() <= 0:
-            out.append("FAILS: no edge even before costs.")
-        elif self.net.mean() <= 0:
-            out.append(f"FAILS on cost: gross is positive but costs take "
-                       f"{self.cost.mean()/self.gross.mean():.0%} of it. "
-                       f"Turnover is {self.avg_turnover:.1%} of gross per day.")
+            out.append(T("same_close"))
+
+        g, n = self.gross.mean(), self.net.mean()
+        if g <= 0:
+            out.append(T("no_edge"))
+        elif n <= 0:
+            out.append(T("cost_kills", share=self.cost.mean() / g,
+                         turn=self.avg_turnover))
         else:
-            out.append(f"Net positive: Sharpe {self.sharpe:.2f}, t={self.t_stat:+.2f}, "
-                       f"costs eat {self.cost_share:.0%} of gross.")
+            out.append(T("net_positive", sharpe=self.sharpe, t=self.t_stat,
+                         share=self.cost_share))
 
         yr = self.by_year()
         if len(yr) > 1:
             pos = int((yr["net_ret"] > 0).sum())
-            out.append(f"{pos}/{len(yr)} calendar years net positive.")
+            out.append(T("years", pos=pos, n=len(yr)))
             if pos <= 1 and len(yr) >= 3:
-                out.append("A result carried by one year is one observation, "
-                           "not several.")
+                out.append(T("one_year"))
 
         lng, sht = self.long_pnl.sum(), self.short_pnl.sum()
         if lng != 0 or sht != 0:
-            dom = "long" if abs(lng) > abs(sht) * 3 else (
-                "short" if abs(sht) > abs(lng) * 3 else None)
+            dom = ("side_long" if abs(lng) > abs(sht) * 3
+                   else ("side_short" if abs(sht) > abs(lng) * 3 else None))
             if dom:
-                out.append(f"Almost all P&L comes from the {dom} side "
-                           f"(long {lng:+.3f} vs short {sht:+.3f}). Check it is not "
-                           f"a market-direction bet.")
+                out.append(T("one_side", side=T(dom), lng=lng, sht=sht))
         return out
 
 
@@ -207,17 +231,22 @@ def simulate(sig: pd.DataFrame, px: pd.DataFrame,
         raise ValueError(f"exec_shift must be >= 0; got {exec_shift}")
     held = w.shift(exec_shift).fillna(0.0)
 
+    intended = held.copy()
+    info: dict = {}
     if enforce_tradability:
-        before = held.copy()
         # lag >= 1: the rules must be assessed with prices known when the trade
         # was placed, never over the period the position earns its return
-        held = xcosts.apply_tradability(held, px, lag=max(exec_shift, 1))
-        blocked = (held - before).abs().sum().sum() / max(before.abs().sum().sum(), 1e-9)
-        if blocked > 0.001:
-            notes.append(f"Tradability rules (漲停/跌停, 平盤下不得放空) changed "
-                         f"{blocked:.1%} of intended book weight.")
+        held, info = xcosts.apply_tradability(
+            held, px, lag=max(exec_shift, 1), return_info=True)
+        moved = (held - intended).abs().sum().sum() / max(
+            intended.abs().sum().sum(), 1e-9)
+        if moved > 0.001:
+            notes.append(("tradability", {"moved": moved}))
 
-    gross, lng, sht = PnlParts(held, ret.fillna(0.0))
+    r0 = ret.fillna(0.0)
+    gross, lng, sht = PnlParts(held, r0)
+    # the P&L of the book you INTENDED: the gap is what the locks cost you
+    raw_gross = (intended * r0).sum(axis=1)
     dw = held.diff().fillna(held)
     trade_cost = cost.trade_cost(dw)
     borrow = cost.borrow_cost(held)
@@ -227,4 +256,68 @@ def simulate(sig: pd.DataFrame, px: pd.DataFrame,
         gross=gross, net=gross - total_cost, long_pnl=lng, short_pnl=sht,
         cost=total_cost, turnover=dw.abs().sum(axis=1) / 2.0,
         coverage=(held != 0).sum(axis=1), weights=held,
-        exec_shift=exec_shift, notes=notes)
+        exec_shift=exec_shift, notes=notes,
+        raw_gross=raw_gross,
+        long_count=(held > 0).sum(axis=1), short_count=(held < 0).sum(axis=1),
+        blocked=info, signal=sig, returns=r0)
+
+
+# --------------------------------------------------------------------------- #
+# the extra analyses a full tearsheet shows
+# --------------------------------------------------------------------------- #
+
+def lag_sweep(sig: pd.DataFrame, px: pd.DataFrame, lags=(1, 2, 3, 5, 10),
+              **kw) -> dict:
+    """Re-run the same signal at several execution lags.
+
+    The decay shape is diagnostic. An edge that survives a few days of delay is
+    a slow effect you could actually implement; one that is gone by lag 2 needed
+    to be executed on the close it was computed from, which nobody can do. It
+    also catches the opposite problem: a "signal" whose P&L is identical at
+    every lag is usually tracking something static, like size.
+    """
+    out = {}
+    for k in lags:
+        try:
+            r = simulate(sig, px, exec_shift=k, **kw)
+        except Exception:                                # noqa: BLE001
+            continue
+        out[int(k)] = (r.net.cumsum(), Sharpe(r.net))
+    return out
+
+
+def bucket_pnl(sig: pd.DataFrame, ret: pd.DataFrame, n: int = 5,
+               exec_shift: int = 1) -> dict:
+    """Equal-weighted P&L of each quantile of the signal's own cross-section.
+
+    Long/short construction assumes the relationship is monotone across the
+    cross-section. Often it is not: the whole effect lives in one tail, and the
+    middle buckets are noise. That is a different and much more fragile object
+    than a monotone factor, and it is invisible in the headline Sharpe.
+    """
+    r = sig.rank(axis=1, pct=True)
+    fwd = ret.shift(-exec_shift) if exec_shift else ret
+    out = {}
+    for i in range(n):
+        lo, hi = i / n, (i + 1) / n
+        m = (r > lo) & (r <= hi) if i else (r >= 0) & (r <= hi)
+        w = m.astype(float)
+        w = w.div(w.sum(axis=1).replace(0, np.nan), axis=0)
+        out[f"Q{i + 1}"] = (w * fwd).sum(axis=1).fillna(0.0).cumsum()
+    return out
+
+
+def group_pnl(weights: pd.DataFrame, ret: pd.DataFrame,
+              group: pd.DataFrame) -> dict:
+    """P&L split by a categorical label per name, e.g. listing board."""
+    g = group.reindex_like(weights)
+    out = {}
+    for label in pd.unique(g.to_numpy().ravel()):
+        if label is None or (isinstance(label, float) and np.isnan(label)):
+            continue
+        m = (g == label)
+        share = weights.where(m).abs().sum().sum() / max(
+            weights.abs().sum().sum(), 1e-9)
+        out[f"{label} ({share:.0%})"] = (weights.where(m, 0.0) * ret).sum(
+            axis=1).cumsum()
+    return out

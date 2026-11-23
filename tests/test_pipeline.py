@@ -138,17 +138,21 @@ def test_an_all_nan_result_is_an_error_with_an_explanation(env):
         pl.run_pipeline(pipe, sources, px)
 
 
+def _keys(notes):
+    return [n[0] if isinstance(n, tuple) else n for n in notes]
+
+
 def test_empty_pipeline_runs_but_warns(env):
     px, sources = env
     pipe = pl.Pipeline.from_json({"source": "returns", "steps": []})
     _, res = pl.run_pipeline(pipe, sources, px)
-    assert any("Empty pipeline" in n for n in res.notes)
+    assert "empty" in _keys(res.notes)
 
 
 def test_missing_portfolio_step_warns(env):
     px, sources = env
     pipe = pl.Pipeline.from_json({"source": "returns", "steps": [{"op": "Rank"}]})
-    assert any("No portfolio step" in w for w in pipe.warnings())
+    assert "no_portfolio" in _keys(pipe.warnings())
 
 
 def test_warnings_reach_the_result(env):
@@ -157,7 +161,22 @@ def test_warnings_reach_the_result(env):
         "source": "returns",
         "steps": [{"op": "GrossScale"}, {"op": "GrossScale"}]})
     _, res = pl.run_pipeline(pipe, sources, px)
-    assert any("GrossScale more than once" in n for n in res.notes)
+    assert "double_gross" in _keys(res.notes)
+
+
+def test_warnings_render_in_both_languages(env):
+    """A warning stored as a key must come out as a sentence in either language."""
+    px, sources = env
+    pipe = pl.Pipeline.from_json({
+        "source": "returns",
+        "steps": [{"op": "GrossScale"}, {"op": "GrossScale"}]})
+    _, res = pl.run_pipeline(pipe, sources, px)
+    en, zh = res.verdict("en"), res.verdict("zh")
+    assert any("GrossScale more than once" in v for v in en)
+    assert any("重複使用 GrossScale" in v for v in zh)
+    assert len(en) == len(zh)
+    # no key should leak through unrendered
+    assert not any(v in ("double_gross", "no_portfolio", "empty") for v in en + zh)
 
 
 # --------------------------------------------------------------------------- #

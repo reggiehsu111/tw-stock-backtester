@@ -22,8 +22,19 @@ import pandas as pd
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from .. import equity_panel, expr as ex, ops, pipeline as pl, xcosts, xsim
+from .. import equity_panel, expr as ex, i18n, ops, pipeline as pl, xcosts, xsim
 from . import charts
+
+
+# What the page shows before you have built anything. A real factor rather than
+# a syntax demonstration, so the first thing a visitor sees is a result with a
+# verdict attached -- including the fact that it loses money after costs.
+EXAMPLE = {
+    "name": "12-1 momentum",
+    "expression": ("GrossScale(LongShortBalance(Rank(\n"
+                   "    InstSum(231, LogReturns(Lag(21, px)))\n"
+                   ")))"),
+}
 
 
 @dataclass
@@ -50,6 +61,28 @@ class PanelState:
                    info=equity_panel.describe(mats, univ))
 
 
+def _is_fail(text: str) -> bool:
+    """Does this verdict line report a failure, in either language?"""
+    return text.startswith(("FAILS", "SAME-CLOSE")) or text.startswith(
+        ("不及格", "敗在成本", "同收盤執行"))
+
+
+def _rate(value, default: float, cap: float = 0.5) -> float:
+    """A cost rate from the form: a fraction, clamped, falling back to default.
+
+    Clamped rather than validated because a typo in a cost box should give a
+    silly-but-finite answer you can see on the chart, not a 400 that loses the
+    rest of the form.
+    """
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not np.isfinite(v) or v < 0:
+        return default
+    return min(v, cap)
+
+
 def _fmt(v, nd=2, pct=False, sign=False):
     if v is None or (isinstance(v, float) and not np.isfinite(v)):
         return "—"
@@ -70,23 +103,57 @@ def register(app, templates, fixture: bool = False) -> None:
 
     @router.get("/", response_class=HTMLResponse)
     @router.get("/build", response_class=HTMLResponse)   # kept so old links work
-    def build_page(request: Request):
+    def build_page(request: Request, lang: str = "en"):
+        lang = i18n.pick(lang)
         try:
             p = panel()
             info, err = p.info, None
         except Exception as exc:                        # noqa: BLE001
             info, err = {}, str(exc)
+
+        cat = ops.catalogue(max_matrix_args=1)
+        every = ops.catalogue()
+        for c in cat + every:
+            c["hint"] = i18n.op_hint(c["name"], c["hint"], lang)
+
         return templates.TemplateResponse(request, "builder.html", {
+            "lang": lang,
+            "langs": i18n.LANGS,
+            "T": lambda k: i18n.t(i18n.UI, k, lang),
+            "CAP": lambda k: i18n.t(i18n.CAPTION, k, lang),
+            "example": EXAMPLE,
+            # Jinja has no dict comprehension, so the strings the browser needs
+            # are assembled here rather than in the template
+            "cfg": {
+                "lang": lang,
+                "example": EXAMPLE,
+                "defaults": {
+                    "brokerage": xcosts.BROKERAGE_TYPICAL * 1e4,
+                    "tax_sell": xcosts.TAX_SELL * 1e4,
+                    "half_spread": 10.0,
+                    "borrow_annual": xcosts.BORROW_ANNUAL * 100,
+                },
+                "strings": {k: i18n.t(i18n.UI, k, lang) for k in (
+                    "running", "done_in", "add_operator", "write_expr",
+                    "valid_blocks", "valid_tree", "no_portfolio", "steps",
+                    "round_trip")},
+            },
             # the canvas draws a linear chain, so it only offers single-matrix
             # operators; the code editor gets the full registry
-            "catalogue": ops.catalogue(max_matrix_args=1),
-            "all_ops": ops.catalogue(),
+            "catalogue": cat,
+            "all_ops": every,
             "sources": pl.SOURCES,
             "presets": pl.PRESETS,
             "info": info,
             "load_error": err,
             "cost": xcosts.TWEquityCost().describe(),
             "cost_rows": xcosts.TWEquityCost().breakdown().to_dict("records"),
+            "defaults": {
+                "brokerage": xcosts.BROKERAGE_TYPICAL * 1e4,
+                "tax_sell": xcosts.TAX_SELL * 1e4,
+                "half_spread": 10.0,
+                "borrow_annual": xcosts.BORROW_ANNUAL * 100,
+            },
             "fixture": fixture,
         })
 
@@ -131,6 +198,8 @@ def register(app, templates, fixture: bool = False) -> None:
         except Exception:                               # noqa: BLE001
             return JSONResponse({"error": "malformed request body"}, status_code=400)
 
+        lang = i18n.pick(str(body.get("lang") or "en"))
+        C = lambda k: i18n.t(i18n.CHART, k, lang)          # noqa: E731
         expression = str(body.get("expression") or "").strip()
         pipe = None
         if not expression:
@@ -148,9 +217,15 @@ def register(app, templates, fixture: bool = False) -> None:
         opts = body.get("options") or {}
         try:
             exec_shift = int(opts.get("exec_shift", 1))
+            # every component of the cost model is a free number, because the
+            # right values depend on your broker and the names you trade, and a
+            # fixed dropdown quietly asserts otherwise
             cost = xcosts.TWEquityCost(
-                brokerage=float(opts.get("brokerage", xcosts.BROKERAGE_TYPICAL)),
-                half_spread=float(opts.get("half_spread", 0.0010)),
+                brokerage=_rate(opts.get("brokerage"), xcosts.BROKERAGE_TYPICAL),
+                tax_sell=_rate(opts.get("tax_sell"), xcosts.TAX_SELL),
+                half_spread=_rate(opts.get("half_spread"), 0.0010),
+                borrow_annual=_rate(opts.get("borrow_annual"),
+                                    xcosts.BORROW_ANNUAL, cap=1.0),
                 day_trade=bool(opts.get("day_trade", False)))
             tradability = bool(opts.get("tradability", True))
         except (TypeError, ValueError) as exc:
@@ -180,40 +255,101 @@ def register(app, templates, fixture: bool = False) -> None:
         s = res.summary()
         by_year = res.by_year()
 
+        # The extra panels. Each is a re-run or a regrouping of what we already
+        # have, and the whole set costs well under a second on this panel, so
+        # they are computed every time rather than hidden behind a button.
+        lags, bkt, boards = {}, {}, {}
+        try:
+            lags = xsim.lag_sweep(sig, p.mats["close"], cost=cost,
+                                  enforce_tradability=tradability)
+        except Exception:                               # noqa: BLE001
+            pass
+        try:
+            bkt = xsim.bucket_pnl(sig, res.returns, exec_shift=exec_shift)
+        except Exception:                               # noqa: BLE001
+            pass
+        try:
+            if "board" in p.mats:
+                boards = xsim.group_pnl(res.weights, res.returns, p.mats["board"])
+        except Exception:                               # noqa: BLE001
+            pass
+
         return JSONResponse({
             "expression": shown,
             "elapsed_ms": int((time.time() - t0) * 1000),
-            "verdict": [{"text": v, "fail": v.startswith(("FAILS", "SAME-CLOSE"))}
-                        for v in res.verdict()],
+            "verdict": [{"text": v, "fail": _is_fail(v)}
+                        for v in res.verdict(lang)],
             "stats": [
-                ["net Sharpe", _fmt(s["sharpe"], 2, sign=True)],
-                ["gross Sharpe", _fmt(s["gross_sharpe"], 2, sign=True)],
-                ["t-stat", _fmt(s["t_stat"], 2, sign=True)],
-                ["annualised return", _fmt(s["ann_return"], 2, pct=True, sign=True)],
-                ["max drawdown", _fmt(s["max_drawdown"], 2, pct=True)],
-                ["hit rate", _fmt(s["hit_rate"], 1, pct=True)],
-                ["turnover / day", _fmt(s["avg_turnover"], 1, pct=True)],
-                ["cost / gross edge", _fmt(s["cost_share"], 0, pct=True)],
-                ["names held", _fmt(s["avg_names"], 0)],
-                ["sessions", f"{s['days']:,}"],
+                [i18n.t(i18n.STAT, k, lang), v] for k, v in (
+                    ("net Sharpe", _fmt(s["sharpe"], 2, sign=True)),
+                    ("gross Sharpe", _fmt(s["gross_sharpe"], 2, sign=True)),
+                    ("t-stat", _fmt(s["t_stat"], 2, sign=True)),
+                    ("annualised return", _fmt(s["ann_return"], 2, pct=True, sign=True)),
+                    ("max drawdown", _fmt(s["max_drawdown"], 2, pct=True)),
+                    ("hit rate", _fmt(s["hit_rate"], 1, pct=True)),
+                    ("turnover / day", _fmt(s["avg_turnover"], 1, pct=True)),
+                    ("cost / gross edge", _fmt(s["cost_share"], 0, pct=True)),
+                    ("names held", _fmt(s["avg_names"], 0)),
+                    ("sessions", f"{s['days']:,}"),
+                )
             ],
+            "cost_bps": round(cost.round_trip_bps, 1),
             "by_year": [[int(r["year"]), f"{r['gross_ret']*100:+.2f}%",
                          f"{r['net_ret']*100:+.2f}%", f"{r['sharpe']:+.2f}",
                          f"{r['hit']*100:.0f}%"] for _, r in by_year.iterrows()],
             "charts": {
                 "equity": charts.equity(
-                    {"gross": res.gross.cumsum(), "net": res.net.cumsum()},
-                    title="Cumulative P&L", ylab="cumulative return"),
-                "by_year": charts.by_year(res.net, ylab="cumulative return"),
+                    {C("l_gross"): res.gross.cumsum(), C("l_net"): res.net.cumsum()},
+                    title=C("cum_pnl"), ylab=C("y_cum_return")),
                 "decomp": charts.equity(
-                    {"total": res.net.cumsum(),
-                     "long": res.long_pnl.cumsum(),
-                     "short": res.short_pnl.cumsum()},
-                    title="Long / short decomposition",
-                    ylab="cumulative return"),
-                "turnover": charts.equity(
-                    {"cumulative cost": res.cost.cumsum()},
-                    title="Cumulative cost", ylab="cumulative cost"),
+                    {C("l_total"): res.net.cumsum(),
+                     C("l_long"): res.long_pnl.cumsum(),
+                     C("l_short"): res.short_pnl.cumsum()},
+                    title=C("long_short"), ylab=C("y_cum_return")),
+                "by_year": charts.by_year(res.net, title=C("by_year"),
+                                          ylab=C("y_cum_return")),
+                "avg_path": charts.avg_path(
+                    res.net, res.long_pnl, res.short_pnl, title=C("avg_path"),
+                    labels=(C("l_total"), C("l_long"), C("l_short")),
+                    ylab=C("y_cum_return"), xlab=C("x_session")),
+
+                "lag_decay": charts.lag_decay(lags, title=C("lag_decay"),
+                                              ylab=C("y_cum_return"),
+                                              lag_label=C("l_lag")),
+                "buckets": charts.buckets(bkt, title=C("buckets"),
+                                          ylab=C("y_cum_return")),
+                "drawdown": charts.drawdown(res.net, title=C("drawdown"),
+                                            label=C("l_drawdown"),
+                                            ylab=C("y_cum_return")),
+                "boards": (charts.groups(boards, title=C("boards"),
+                                         ylab=C("y_cum_return"))
+                           if boards else charts.empty("—")),
+
+                "cost": charts.equity(
+                    {C("l_gross"): res.gross.cumsum(), C("l_net"): res.net.cumsum(),
+                     C("l_cost"): res.cost.cumsum()},
+                    title=C("cost"), ylab=C("y_cum_return")),
+                "turnover": charts.series_panel(
+                    C("l_turnover"), res.turnover, C("turnover"),
+                    C("y_fraction"), window=20),
+                "counts": charts.counts(res.long_count, res.short_count,
+                                        title=C("counts"),
+                                        labels=(C("l_long"), C("l_short")),
+                                        ylab=C("y_names")),
+                "limit_drag": (charts.equity(
+                    {C("l_intended"): res.raw_gross.cumsum(),
+                     C("l_tradable"): res.gross.cumsum()},
+                    title=C("limit_drag"), ylab=C("y_cum_return"))
+                    if res.raw_gross is not None else charts.empty("—")),
+
+                "blocked": (charts.counts(
+                    res.blocked.get("blocked_buy"), res.blocked.get("blocked_sell"),
+                    title=C("blocked"), labels=("漲停", "跌停"), ylab=C("y_names"))
+                    if res.blocked else charts.empty("—")),
+                "untraded": (charts.series_panel(
+                    C("l_untraded"), res.blocked["untraded_gmv"], C("untraded"),
+                    C("y_fraction"), window=20)
+                    if res.blocked else charts.empty("—")),
             },
         })
 

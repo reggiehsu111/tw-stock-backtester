@@ -181,7 +181,8 @@ def limit_locked(px: pd.DataFrame, limit: float = 0.0998,
 def apply_tradability(target_w: pd.DataFrame, px: pd.DataFrame,
                       enforce_short_rule: bool = True,
                       enforce_limits: bool = True,
-                      lag: int = 1) -> pd.DataFrame:
+                      lag: int = 1,
+                      return_info: bool = False):
     """Turn intended weights into weights you could actually have held.
 
     Three rules, applied in order, each carrying yesterday's weight forward where
@@ -215,16 +216,34 @@ def apply_tradability(target_w: pd.DataFrame, px: pd.DataFrame,
     tgt_v, up_v, dn_v, cs_v = (tgt.to_numpy(), up.to_numpy(),
                                dn.to_numpy(), can_short.to_numpy())
 
+    n_buy = np.zeros(len(tgt_v))        # names we wanted to buy and could not
+    n_sell = np.zeros(len(tgt_v))       # ... to sell
+    n_short = np.zeros(len(tgt_v))      # ... to short
+
     for i in range(len(tgt_v)):
         want = tgt_v[i].copy()
         if enforce_limits:
             blocked_buy = up_v[i] & (want > held)
             blocked_sell = dn_v[i] & (want < held)
+            n_buy[i] = blocked_buy.sum()
+            n_sell[i] = blocked_sell.sum()
             want = np.where(blocked_buy | blocked_sell, held, want)
         if enforce_short_rule:
             new_short = (want < 0) & (want < held) & (~cs_v[i])
+            n_short[i] = new_short.sum()
             want = np.where(new_short, np.minimum(held, 0.0), want)
         out[i] = want
         held = want
 
-    return pd.DataFrame(out, index=tgt.index, columns=tgt.columns)
+    w = pd.DataFrame(out, index=tgt.index, columns=tgt.columns)
+    if not return_info:
+        return w
+    info = {
+        "blocked_buy": pd.Series(n_buy, index=tgt.index),
+        "blocked_sell": pd.Series(n_sell, index=tgt.index),
+        "blocked_short": pd.Series(n_short, index=tgt.index),
+        # how much book weight never got traded because of a lock or the
+        # short rule -- the exposure you intended but did not have
+        "untraded_gmv": (tgt - w).abs().sum(axis=1),
+    }
+    return w, info

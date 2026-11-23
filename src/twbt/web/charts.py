@@ -322,3 +322,169 @@ def cost_curve(sens: pd.DataFrame, title: str = "Cost sensitivity") -> str:
         body.append(f'<circle class="dot" cx="{x(a):.1f}" cy="{y(b):.1f}" r="3.2" '
                     f'fill="{SERIES_COLOURS[0]}"/>')
     return _svg("".join(body), title)
+
+
+# --------------------------------------------------------------------------- #
+# the rest of the panel set
+#
+# These mirror the panels a full research tearsheet draws. Each exists because
+# it answers a question the cumulative P&L curve cannot:
+#
+#   avg_path       what a typical YEAR looked like, long and short separately
+#   counts         how many names are actually held on each side
+#   series         a generic line panel (turnover, drawdown, blocked names)
+#   lag_decay      how fast the edge dies as execution is delayed
+#   buckets        is the signal monotone across its own cross-section
+#   bars           a small categorical comparison
+# --------------------------------------------------------------------------- #
+
+def _simple(series: dict, title: str, ylab: str, xlab: str = "",
+            x_is_date: bool = True, zero: bool = True) -> str:
+    """A line panel over a shared x axis. The workhorse behind most panels."""
+    series = {k: pd.Series(v).dropna() for k, v in series.items()}
+    series = {k: v for k, v in series.items() if len(v) > 1}
+    if not series:
+        return empty("nothing to plot")
+
+    def xs_of(s):
+        if x_is_date and isinstance(s.index, pd.DatetimeIndex):
+            return s.index.values.astype("datetime64[D]").astype(int)
+        return np.arange(len(s), dtype=float)
+
+    all_x = np.concatenate([xs_of(v) for v in series.values()])
+    all_y = np.concatenate([v.to_numpy(dtype=float) for v in series.values()])
+    all_y = all_y[np.isfinite(all_y)]
+    if not len(all_y):
+        return empty("nothing to plot")
+    lo, hi = float(all_y.min()), float(all_y.max())
+    if zero:
+        lo, hi = min(lo, 0.0), max(hi, 0.0)
+    pad = (hi - lo) * 0.08 or 1.0
+    x = Scale(float(all_x.min()), float(all_x.max()), PAD_L, W - PAD_R)
+    y = Scale(lo - pad, hi + pad, H - PAD_B, PAD_T)
+
+    if x_is_date and isinstance(next(iter(series.values())).index, pd.DatetimeIndex):
+        xt = list(np.linspace(all_x.min(), all_x.max(), 5))
+        xfmt = lambda v: pd.Timestamp(int(v), unit="D").strftime("%Y-%m")  # noqa: E731
+    else:
+        xt = list(np.linspace(all_x.min(), all_x.max(), 5))
+        xfmt = lambda v: f"{v:,.0f}"                                       # noqa: E731
+
+    body = [_frame(x, y, xlab, ylab, xt, _nice_ticks(lo - pad, hi + pad), xfmt)]
+    if lo < 0 < hi:
+        body.append(f'<line class="zero" x1="{PAD_L}" y1="{y(0):.1f}" '
+                    f'x2="{W - PAD_R}" y2="{y(0):.1f}"/>')
+
+    for i, (name, s) in enumerate(series.items()):
+        c = SERIES_COLOURS[i % len(SERIES_COLOURS)]
+        body.append(f'<path class="line" stroke="{c}" '
+                    f'd="{_path(xs_of(s), s.to_numpy(dtype=float), x, y)}"/>')
+        ly = PAD_T + 14 + i * 15
+        body.append(f'<rect class="swatch" x="{W - PAD_R - 190}" y="{ly - 8}" '
+                    f'fill="{c}"/>')
+        body.append(f'<text class="legend" x="{W - PAD_R - 176}" y="{ly}">'
+                    f'{_esc(name)} <tspan class="num">'
+                    f'{_num(float(s.iloc[-1]), hi - lo)}</tspan></text>')
+    return _svg("".join(body), title)
+
+
+def avg_path(total, long_, short, title="Average path by year",
+             labels=("total", "long", "short"),
+             ylab="cumulative return", xlab="session of year") -> str:
+    """Average cumulative path across calendar years, for each side of the book.
+
+    One good year makes the cumulative chart look like a strategy. This asks
+    what a *typical* year looked like, which is a harder question to fake.
+    """
+    from ..xsim import AvgPath
+    return _simple(dict(zip(labels, (AvgPath(total), AvgPath(long_),
+                                     AvgPath(short)))),
+                   title, ylab, xlab, x_is_date=False)
+
+
+def counts(long_count, short_count, title="Names held",
+           labels=("long", "short"), ylab="names") -> str:
+    """How many names on each side. A book that quietly concentrates shows here."""
+    return _simple(dict(zip(labels, (long_count, short_count))),
+                   title, ylab, zero=True)
+
+
+def series_panel(name: str, s, title: str, ylab: str, window: int = 0) -> str:
+    """One series, optionally smoothed, as its own panel."""
+    s = pd.Series(s).dropna()
+    if window > 1:
+        s = s.rolling(window, min_periods=max(2, window // 3)).mean()
+    return _simple({name: s}, title, ylab)
+
+
+def drawdown(net, title="Rolling drawdown", label="drawdown",
+             ylab="cumulative return") -> str:
+    eq = pd.Series(net).dropna().cumsum()
+    return _simple({label: eq - eq.cummax()}, title, ylab)
+
+
+def lag_decay(by_lag: dict, title="Cumulative P&L by execution lag",
+              ylab="cumulative return", lag_label="lag") -> str:
+    """The same signal executed 1, 2, 3… sessions later.
+
+    The shape of the decay says what kind of thing you have. An edge that
+    survives several days of delay is a slow effect you can actually trade; one
+    that vanishes by lag 2 needed to be executed on the close you computed it
+    from, which you cannot do.
+    """
+    return _simple({f"{lag_label} {k} (SR {v[1]:+.2f})": v[0]
+                    for k, v in sorted(by_lag.items())}, title, ylab)
+
+
+def buckets(bucket_pnl: dict, title="Cumulative P&L by signal quintile",
+            ylab="cumulative return") -> str:
+    """Cross-section split into quantiles of the signal.
+
+    The question is monotonicity. A signal whose top bucket makes money while
+    the middle three are noise and the bottom is flat is not the monotone
+    relationship the long/short construction assumes — it is one tail.
+    """
+    return _simple(dict(bucket_pnl), title, ylab)
+
+
+def groups(group_pnl: dict, title="Cumulative P&L by group",
+           ylab="cumulative return") -> str:
+    return _simple(group_pnl, title, ylab)
+
+
+def bars(labels, values, title: str, ylab: str = "") -> str:
+    """A small horizontal bar panel, for categorical comparisons."""
+    labels, values = list(labels), [float(v) for v in values]
+    if not labels:
+        return empty("nothing to plot")
+    lo, hi = min(min(values), 0.0), max(max(values), 0.0)
+    pad = (hi - lo) * 0.12 or 1.0
+    x = Scale(lo - pad, hi + pad, PAD_L + 70, W - PAD_R)
+    row_h = min(26.0, (H - PAD_T - PAD_B) / max(len(labels), 1))
+
+    body = []
+    nd = _tick_decimals(_nice_ticks(lo - pad, hi + pad))
+    for t in _nice_ticks(lo - pad, hi + pad):
+        px_ = x(t)
+        body.append(f'<line class="grid" x1="{px_:.1f}" y1="{PAD_T}" '
+                    f'x2="{px_:.1f}" y2="{H - PAD_B}"/>')
+        body.append(f'<text class="tick xtick" x="{px_:.1f}" y="{H - PAD_B + 16}">'
+                    f'{t:,.{nd}f}</text>')
+    body.append(f'<line class="axis" x1="{x(0):.1f}" y1="{PAD_T}" '
+                f'x2="{x(0):.1f}" y2="{H - PAD_B}"/>')
+
+    for i, (lab, v) in enumerate(zip(labels, values)):
+        cy = PAD_T + i * row_h + row_h / 2
+        x0, x1 = x(min(v, 0.0)), x(max(v, 0.0))
+        c = SERIES_COLOURS[i % len(SERIES_COLOURS)]
+        body.append(f'<rect x="{x0:.1f}" y="{cy - row_h * 0.33:.1f}" '
+                    f'width="{max(x1 - x0, 0.6):.1f}" height="{row_h * 0.66:.1f}" '
+                    f'fill="{c}" rx="2"/>')
+        body.append(f'<text class="tick ytick" x="{PAD_L + 62}" y="{cy + 3.5:.1f}">'
+                    f'{_esc(lab)}</text>')
+        body.append(f'<text class="legend" x="{x1 + 6:.1f}" y="{cy + 3.5:.1f}">'
+                    f'{_num(v, hi - lo)}</text>')
+    if ylab:
+        body.append(f'<text class="axlab" x="{(PAD_L + W - PAD_R)/2}" y="{H - 4}">'
+                    f'{_esc(ylab)}</text>')
+    return _svg("".join(body), title)

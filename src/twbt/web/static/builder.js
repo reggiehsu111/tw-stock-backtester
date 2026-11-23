@@ -10,12 +10,48 @@
   'use strict';
 
   var PRESETS = JSON.parse(document.getElementById('presetdata').textContent);
+  var CFG = JSON.parse(document.getElementById('cfg').textContent);
+  var S = CFG.strings;
   var steps = [];            // [{op, params:{}}]
   var mode = 'blocks';       // 'blocks' | 'code'
   var dragFrom = null;       // index when reordering, null when from palette
   var dragOp = null;         // {op, params} when dragging from the palette
 
   function $(id) { return document.getElementById(id); }
+
+  /* Hover help. A native title= attribute works but takes about a second to
+     appear and cannot show the signature on its own line, which is the half
+     people actually need when deciding what to type. */
+  var tip = document.getElementById('tip');
+
+  function showTip(el) {
+    var hint = el.dataset.hint, sig = el.dataset.sig;
+    if (!hint && !sig) return;
+    tip.innerHTML = '';
+    if (sig) {
+      var c = document.createElement('code');
+      c.className = 'tsig'; c.textContent = sig; tip.appendChild(c);
+    }
+    if (hint) tip.appendChild(document.createTextNode(hint));
+    tip.hidden = false;
+    var r = el.getBoundingClientRect(), t = tip.getBoundingClientRect();
+    var left = Math.min(r.right + 10, window.innerWidth - t.width - 10);
+    if (r.right + 10 + t.width > window.innerWidth) left = Math.max(10, r.left - t.width - 10);
+    tip.style.left = left + 'px';
+    tip.style.top = Math.max(10, Math.min(r.top, window.innerHeight - t.height - 10)) + 'px';
+  }
+
+  function hideTip() { tip.hidden = true; }
+
+  document.addEventListener('mouseover', function (e) {
+    var el = e.target.closest('[data-hint]');
+    if (el) showTip(el); else hideTip();
+  });
+  document.addEventListener('mouseout', function (e) {
+    if (e.target.closest('[data-hint]')) hideTip();
+  });
+  document.addEventListener('scroll', hideTip, true);
+  window.addEventListener('blur', hideTip);
   var canvas = $('canvas'), expr = $('expr'), results = $('results'),
       status = $('status'), code = $('code'), codestatus = $('codestatus');
 
@@ -146,8 +182,8 @@
       return ['LongShortBalance', 'GrossScale', 'TopN'].indexOf(s.op) >= 0;
     });
     $('blockhint').textContent = steps.length && !portfolio
-      ? 'No portfolio step yet — add LongShortBalance or GrossScale to make weights.'
-      : (steps.length + ' step' + (steps.length === 1 ? '' : 's'));
+      ? S.no_portfolio
+      : (steps.length + ' ' + S.steps);
     refreshExpr();
   }
 
@@ -232,7 +268,7 @@
     try {
       var r = await fetch('api/parse', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ expression: src })
+        body: JSON.stringify({ expression: src, lang: CFG.lang })
       });
       j = await r.json();
     } catch (err) { setCodeStatus('bad', String(err)); return; }
@@ -246,9 +282,9 @@
         sel.value = want;
       }
       render();                      // the canvas must show what the code says
-      setCodeStatus('good', 'Valid — also editable as blocks.');
+      setCodeStatus('good', S.valid_blocks);
     } else {
-      setCodeStatus('good', 'Valid. This expression branches, so it has no block form.');
+      setCodeStatus('good', S.valid_tree);
     }
     refreshExpr();
   }
@@ -289,6 +325,38 @@
   $('source').addEventListener('change', refreshExpr);
   $('run').addEventListener('click', run);
 
+  var COST_IDS = ['brokerage', 'tax_sell', 'half_spread', 'borrow_annual'];
+
+  function costRates() {
+    // the form is in bps (and %/yr for borrow); the API wants fractions
+    var n = function (id, div) {
+      var v = parseFloat($(id).value);
+      return (isFinite(v) && v >= 0) ? v / div : CFG.defaults[id] / div;
+    };
+    return {
+      brokerage: n('brokerage', 1e4),
+      tax_sell: n('tax_sell', 1e4),
+      half_spread: n('half_spread', 1e4),
+      borrow_annual: n('borrow_annual', 100)
+    };
+  }
+
+  function refreshCost() {
+    var r = costRates();
+    var tax = $('day_trade').checked ? r.tax_sell / 2 : r.tax_sell;
+    var rt = (2 * r.brokerage + tax + 2 * r.half_spread) * 1e4;
+    $('rt').textContent = rt.toFixed(1) + ' bps';
+  }
+
+  COST_IDS.forEach(function (id) { $(id).addEventListener('input', refreshCost); });
+  $('day_trade').addEventListener('change', refreshCost);
+  $('resetcosts').addEventListener('click', function () {
+    COST_IDS.forEach(function (id) {
+      $(id).value = CFG.defaults[id].toFixed(id === 'borrow_annual' ? 2 : 1);
+    });
+    refreshCost();
+  });
+
   function setStatus(msg, bad) {
     status.hidden = !msg;
     status.textContent = msg || '';
@@ -296,25 +364,29 @@
   }
 
   async function run() {
+    var rates = costRates();
     var body = {
+      lang: CFG.lang,
       options: {
         exec_shift: parseInt($('exec_shift').value, 10),
-        brokerage: parseFloat($('brokerage').value),
-        half_spread: parseFloat($('half_spread').value),
+        brokerage: rates.brokerage,
+        tax_sell: rates.tax_sell,
+        half_spread: rates.half_spread,
+        borrow_annual: rates.borrow_annual,
         tradability: $('tradability').checked,
         day_trade: $('day_trade').checked
       }
     };
     if (mode === 'code') {
-      if (!code.value.trim()) { setStatus('Write an expression first.', true); return; }
+      if (!code.value.trim()) { setStatus(S.write_expr, true); return; }
       body.expression = code.value.trim();
     } else {
-      if (!steps.length) { setStatus('Add at least one operator.', true); return; }
+      if (!steps.length) { setStatus(S.add_operator, true); return; }
       body.source = $('source').value;
       body.steps = steps;
     }
 
-    setStatus('Running…', false);
+    setStatus(S.running, false);
     $('run').disabled = true;
     var r, j;
     try {
@@ -340,7 +412,7 @@
       return;
     }
 
-    setStatus('Done in ' + j.elapsed_ms + ' ms', false);
+    setStatus(S.done_in + ' ' + j.elapsed_ms + ' ms', false);
     expr.textContent = 'sig = ' + j.expression;
 
     var v = $('verdict'); v.innerHTML = '';
@@ -354,6 +426,10 @@
     Object.keys(j.charts).forEach(function (k) {
       var node = $('c_' + k);
       if (node) node.innerHTML = j.charts[k];
+    });
+    // a panel with no target element would silently vanish, so say so
+    Object.keys(j.charts).forEach(function (k) {
+      if (!$('c_' + k)) console.warn('no slot for chart', k);
     });
 
     var st = $('stats'); st.innerHTML = '';
@@ -377,5 +453,18 @@
     results.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  render();
+  /* First paint shows a worked example rather than an empty canvas. It is a
+     real factor with a real verdict attached -- including, at these costs, the
+     fact that it loses money -- which is a more honest landing page than a
+     blank form or a curated winner. */
+  function boot() {
+    refreshCost();
+    render();
+    if (CFG.example && CFG.example.expression) {
+      code.value = CFG.example.expression;
+      validateCode().then(function () { run(); });
+    }
+  }
+
+  boot();
 })();

@@ -81,8 +81,9 @@ def create_app(fixture: bool = False) -> FastAPI:
                 "sharpe": _fmt(m.sharpe, 2, sign=True),
                 "fails": len(fails),
             })
-        return TEMPLATES.TemplateResponse(request, "index.html",
-                                          {"cards": cards, "fixture": fixture})
+        return TEMPLATES.TemplateResponse(
+            request, "index.html",
+            {"cards": cards, "fixture": fixture, "lang": "en", "langs": None})
 
     @app.get("/s/{name}", response_class=HTMLResponse)
     def tearsheet(request: Request, name: str):
@@ -118,6 +119,7 @@ def create_app(fixture: bool = False) -> FastAPI:
                                + f" for {r.n_variants_tested} variants"))
 
         return TEMPLATES.TemplateResponse(request, "tearsheet.html", {
+            "lang": "en", "langs": None,
             "name": name,
             "verdict": verdict,
             "stats_rows": stats_rows,

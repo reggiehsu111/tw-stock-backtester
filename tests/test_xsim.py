@@ -205,3 +205,64 @@ def test_avgpath_averages_years_and_drops_short_stubs():
 def test_sharpe_handles_degenerate_input():
     assert np.isnan(xsim.Sharpe(pd.Series(dtype=float)))
     assert np.isnan(xsim.Sharpe(pd.Series([1.0, 1.0, 1.0])))
+
+
+# --------------------------------------------------------------------------- #
+# configurable costs and translated output
+# --------------------------------------------------------------------------- #
+
+def test_every_cost_component_is_adjustable():
+    """The right rates depend on your broker; a fixed dropdown asserts otherwise."""
+    base = xcosts.TWEquityCost()
+    cheap = xcosts.TWEquityCost(brokerage=0.0, half_spread=0.0, tax_sell=0.0)
+    assert cheap.round_trip_bps == 0.0
+    assert base.round_trip_bps > 0
+
+    tax_only = xcosts.TWEquityCost(brokerage=0.0, half_spread=0.0)
+    assert tax_only.round_trip_bps == pytest.approx(xcosts.TAX_SELL * 1e4)
+    assert xcosts.TWEquityCost(brokerage=0.0, half_spread=0.0,
+                               day_trade=True).round_trip_bps == pytest.approx(
+        xcosts.TAX_SELL_DAYTRADE * 1e4)
+
+
+def test_borrow_rate_is_adjustable_and_only_hits_shorts():
+    w = pd.DataFrame({"a": [0.5], "b": [-0.5]}, index=IDX[:1])
+    lo = xcosts.TWEquityCost(borrow_annual=0.0).borrow_cost(w).iloc[0]
+    hi = xcosts.TWEquityCost(borrow_annual=0.10).borrow_cost(w).iloc[0]
+    assert lo == 0.0 and hi > 0
+
+
+def test_verdict_renders_in_both_languages_without_leaking_keys():
+    px = _px()
+    r = xsim.simulate(_reversal(px), px)
+    en, zh = r.verdict("en"), r.verdict("zh")
+    assert len(en) == len(zh) > 0
+    # not "contains a space": a Chinese sentence legitimately has none
+    assert all(isinstance(v, str) and len(v) > 8 for v in en + zh)
+    # a Chinese verdict must actually contain Chinese
+    assert any(any("一" <= ch <= "鿿" for ch in v) for v in zh)
+    # and must not be identical to the English
+    assert en != zh
+
+
+def test_diagnostics_are_populated_for_the_extra_panels():
+    px = _px()
+    r = xsim.simulate(_reversal(px), px)
+    assert r.raw_gross is not None and len(r.raw_gross) == len(r.gross)
+    assert r.long_count is not None and r.long_count.max() > 0
+    assert set(r.blocked) >= {"blocked_buy", "blocked_sell", "untraded_gmv"}
+    assert (r.blocked["untraded_gmv"] >= 0).all()
+    # the locks cost something, and the engine can say how much
+    assert len(r.limit_drag) == len(r.gross)
+
+
+def test_lag_sweep_and_buckets_produce_usable_series():
+    px = _px()
+    sig = _reversal(px)
+    lags = xsim.lag_sweep(sig, px, lags=(1, 2, 3))
+    assert set(lags) == {1, 2, 3}
+    assert all(len(v[0]) > 100 and np.isfinite(v[1]) for v in lags.values())
+
+    bkt = xsim.bucket_pnl(sig, px.pct_change().fillna(0.0))
+    assert list(bkt) == [f"Q{i}" for i in range(1, 6)]
+    assert all(len(v) > 100 for v in bkt.values())

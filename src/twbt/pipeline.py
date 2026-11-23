@@ -117,19 +117,16 @@ class Pipeline:
         out = []
         names = [s.op for s in self.steps]
         if not names:
-            out.append("Empty pipeline: the raw source is being used as weights.")
+            out.append(("empty", {}))
             return out
         portfolio = {n for n, o in ops.ALL_OPS.items() if o.group == "portfolio"}
         if not set(names) & portfolio:
-            out.append("No portfolio step (LongShortBalance / GrossScale / TopN). "
-                       "The engine will normalise anyway, but the book you get is "
-                       "not the one you specified.")
+            out.append(("no_portfolio", {}))
         if "Rank" in names and "Demean" in names:
             if names.index("Rank") < names.index("Demean"):
-                out.append("Demean after Rank re-centres an already-uniform "
-                           "distribution, which mostly just shifts it by 0.5.")
+                out.append(("rank_demean", {}))
         if names.count("GrossScale") > 1:
-            out.append("GrossScale more than once: all but the last are discarded.")
+            out.append(("double_gross", {}))
         return out
 
 
