@@ -11,3 +11,7 @@ build/
 # cached downloads are regenerable; the committed fixture lives in data/fixture/
 data/cache/*
 !data/cache/.gitkeep
+
+# a clone made inside the working copy: `git clone <url>` run from this
+# directory lands here, and `git add -A` would commit it as a gitlink
+/tw-stock-backtester/
