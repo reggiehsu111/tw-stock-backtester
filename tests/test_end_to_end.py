@@ -141,3 +141,43 @@ def test_every_chart_renders_from_a_real_result(p):
         assert svg.startswith("<svg"), name
         assert "empty" not in svg, f"{name} rendered a placeholder on real data"
         assert svg.count("<path") >= 1, name
+
+
+# --------------------------------------------------------------------------- #
+# measured spreads
+# --------------------------------------------------------------------------- #
+
+def test_panel_derives_a_measured_spread_from_the_quotes(p):
+    assert "spread_bps" in p.columns
+    sp = p["spread_bps"].dropna()
+    assert len(sp) > 400, "the bid/ask columns are not being read"
+    assert 0.3 < sp.median() < 5.0
+    assert (sp >= 0).all()
+
+
+def test_measured_spread_is_wider_on_volatile_days(p):
+    """The reason a constant is not good enough, as an assertion.
+
+    If this ever fails, the argument for carrying measured spreads through the
+    engine has gone away and the extra machinery should go with it.
+    """
+    from twbt import stats
+
+    d = p[["spread_bps", "range_bps"]].dropna()
+    assert len(d) > 300
+    hi = d[d.range_bps >= d.range_bps.median()]["spread_bps"]
+    lo = d[d.range_bps < d.range_bps.median()]["spread_bps"]
+    diff, t = stats.welch(hi, lo)
+    assert diff > 0, "spread should be wider on high-range days"
+    assert t > 2.5, f"expected a clear effect, got t={t:.2f}"
+
+
+def test_using_the_measured_spread_charges_more_than_the_constant(p):
+    """And it charges more on the days these strategies actually trade."""
+    strat = strategies.get("momentum")()
+    with_measured = backtest.run(p, strat, contracts=("TXF",)).main
+    without = backtest.run(p.drop(columns=["spread_bps"]), strat,
+                           contracts=("TXF",)).main
+
+    assert with_measured.avg_cost_bps > without.avg_cost_bps
+    assert with_measured.net_perf.mean < without.net_perf.mean

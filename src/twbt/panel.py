@@ -191,6 +191,7 @@ def build(root=None, fixture: bool = False) -> pd.DataFrame:
         ret_intra    today's open to today's close, in bps
         range_bps    (high - low) / close, in bps
         vol_20       trailing 20-day sd of ret, as of yesterday
+        spread_bps   measured closing bid-ask width, in bps (NaN where implausible)
 
     Institutional columns are left on the date they were *published*. Shifting them
     into tradable alignment is the backtest engine's job, not the panel's — see
@@ -211,6 +212,18 @@ def build(root=None, fixture: bool = False) -> pd.DataFrame:
     p["range_bps"] = (p["high"] - p["low"]) / p["close"] * 1e4
     p["vol_20"] = realised_vol(p["ret"])
     p["oi_chg"] = p["open_interest"].diff()
+
+    # Measured closing spread, from the bid/ask columns TAIFEX already ships.
+    # This is one snapshot per session at the close rather than a time-weighted
+    # average, so it is an estimate and a slightly conservative one -- the close
+    # is wider than mid-session. It is still far better than a constant, because
+    # the spread is systematically wider on volatile days, which are exactly the
+    # days most signals fire. Implausible values (crossed quotes, or a width over
+    # 30 bps) are dropped rather than clipped, so the cost model falls back to its
+    # default for those sessions instead of charging a parse error.
+    if {"bid", "ask"} <= set(p.columns):
+        sp = (p["ask"] - p["bid"]) / p["close"].where(p["close"] > 0) * 1e4
+        p["spread_bps"] = sp.where((sp >= 0) & (sp < 30))
 
     for name, fn in (("three_majors", _majors_wide), ("large_trader", _trader_wide)):
         try:

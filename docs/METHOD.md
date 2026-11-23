@@ -116,26 +116,76 @@ t = 3.4 on its own while being statistically indistinguishable from the other bu
 
 ---
 
-## 4. Costs: one spread per round trip, not two
+## 4. Costs: one spread per round trip, and measure it
 
-A round trip crosses the spread **once in total** — you buy at the ask (half a spread
-above mid) and sell at the bid (half below). Charging a full spread at each leg
-double-counts.
+Two separate mistakes live here. The first is arithmetic, the second is an assumption
+that survives because it sounds careful.
+
+**One spread, not two.** A round trip crosses the spread **once in total** — you buy
+at the ask, half a spread above mid, and sell at the bid, half below. Charging a full
+spread at each leg double-counts.
 
 ```
-cost = spread_entry/2 + spread_exit/2 + fees
+cost = spread_entry/2 + spread_exit/2 + fees_entry + fees_exit
 ```
 
 Getting this wrong by one spread flipped a result from "clearly tradable" to "below
-cost" during development. The model also keeps per-leg spreads separate, because the
-first minute of a session is routinely 50% wider than the rest — charging the average
-makes an open-entry strategy look better than it is.
+cost" during development. The related trap is the *other* direction: masking the cost
+series to days with a non-zero position drops the exit leg, because the position is
+already flat on the day the exit is charged, and the backtest then pays half a round
+trip. Both are invisible in a diff. `tests/test_backtest.py` pins the arithmetic:
+`0 → 1 → 0` costs exactly one round trip, and so does `0 → 1 → 1 → 1 → 0`.
 
-`costs.CostModel` takes measured spreads rather than a flat assumption, and the tearsheet
-plots **t-stat against cost** so you can see how much slippage the result survives. A
-strategy that dies between 1.5 and 2.0 bps is not a strategy.
+**Hold the spread in bps, not in points.** An earlier version of this project held the
+spread fixed at 3.0 index points and argued that holding it fixed in bps would
+"understate cost early and overstate it late". That argument was backwards, and
+measuring it settled the question. On the TX front month:
 
----
+| year | median close | median spread (pts) | median spread (bps) |
+|---|---|---|---|
+| 2024 | 21,897 | 2.0 | 1.12 |
+| 2025 | 23,344 | 3.0 | 1.37 |
+| 2026 | 43,204 | 6.0 | 1.50 |
+
+The index roughly doubled and the point spread tripled. **Points are the unstable
+unit.** The fixed-point model charged 0.92 bps in 2026 where the measured cost was
+2.33 — a 2.5× understatement that *grows* across the sample, which is the worst shape
+an error can take, because it manufactures a trend.
+
+Fees go the other way. They are a fixed NT$ amount, so they genuinely do shrink as a
+share of notional. The model therefore holds the spread constant in bps and the fees
+constant in points, which is not an inconsistency but the measured behaviour of two
+different things.
+
+**Better still: do not assume at all.** TAIFEX ships the closing bid and ask in the
+same file as the prices. `panel.build` turns them into a `spread_bps` column and the
+engine uses it automatically. This matters beyond accuracy-on-average, because the
+spread is **wider on exactly the days a signal fires**:
+
+| day's range | median spread |
+|---|---|
+| Q1 (calmest) | 1.27 bps |
+| Q3 | 1.27 bps |
+| Q5 (wildest) | 1.85 bps |
+
+Regressing spread on range gives t = +6.0; high-range days cost 0.56 bps more than
+low-range days (t = +5.8). Any strategy that triggers on volatility — which is most of
+them — is therefore systematically undercharged by a constant. Measured spreads raise
+the realised cost of the bundled momentum strategy by 52%, from 2.61 to 3.98 bps per
+trade. It is a daily closing snapshot rather than a time-weighted average, so it is an
+estimate too, but it is an estimate that moves with the market instead of with a guess.
+
+`costs.CostModel` accepts measured spreads, a bps constant, or a point constant, in
+that order of preference, and the tearsheet plots **t-stat against cost** so you can
+see how much slippage the result survives. A strategy that dies between 1.5 and 2.0
+bps is not a strategy.
+
+**What this model does not include**, and should not be read as including: market
+impact, partial fills, and any size-dependence at all. It prices one contract. There
+is also no short-side asymmetry, which is correct for index futures — no borrow, no
+locate, no uptick rule — but would be badly wrong if this were ever pointed at cash
+equities, where a Taiwan short carries both a borrow fee and the risk of being trapped
+by a limit-up close.
 
 ## 5. The test that outranks all the statistics
 

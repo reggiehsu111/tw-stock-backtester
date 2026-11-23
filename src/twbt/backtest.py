@@ -304,6 +304,11 @@ def run(panel: pd.DataFrame, strategy: Strategy,
     gross = (pos * ret).fillna(0.0).rename("gross_bps")
     base_cost = cost_model or costs_mod.CostModel()
 
+    # Prefer the measured spread when the panel carries one. The default is a
+    # constant, and a constant understates cost on exactly the volatile days most
+    # signals fire on -- see the regression in costs.py.
+    measured = panel["spread_bps"] if "spread_bps" in panel.columns else None
+
     out = BacktestResult(strategy=strategy.name, primary=contracts[0],
                          n_variants_tested=n_variants_tested)
 
@@ -312,9 +317,13 @@ def run(panel: pd.DataFrame, strategy: Strategy,
         # "charge me 5 points everywhere" means that, while the default (None) picks
         # up each contract's own observed width
         cm = replace(base_cost, contract=c)
-        cost = (cm.round_trip_bps(px) * legs).fillna(0.0).rename("cost_bps")
+        rt = cm.round_trip_bps(px, measured)
+        if isinstance(rt, pd.Series):
+            # fall back to the model's own default on sessions with no usable quote
+            rt = rt.fillna(cm.round_trip_bps(px))
+        cost = (rt * legs).fillna(0.0).rename("cost_bps")
         net = (gross - cost).rename("net_bps")
-        tr = _trades(pos, gross, cost, cm.round_trip_bps(px))
+        tr = _trades(pos, gross, cost, rt)
 
         out.contracts[c] = ContractResult(
             contract=c,
@@ -323,7 +332,9 @@ def run(panel: pd.DataFrame, strategy: Strategy,
             gross_perf=stats.performance(tr["gross_bps"] if len(tr) else pd.Series(dtype=float)),
             net_perf=stats.performance(tr["net_bps"] if len(tr) else pd.Series(dtype=float)),
             sensitivity=(costs_mod.sensitivity(
-                gross[pos != 0.0], px[pos != 0.0], cm, turnover=legs[pos != 0.0])
+                gross[pos != 0.0], px[pos != 0.0], cm, turnover=legs[pos != 0.0],
+                measured_spread_bps=(measured[pos != 0.0]
+                                     if measured is not None else None))
                 if (pos != 0.0).any() else pd.DataFrame()),
         )
 

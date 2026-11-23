@@ -139,3 +139,65 @@ def test_breakeven_is_the_gross_mean():
 def test_describe_mentions_the_round_trip():
     text = costs.CostModel("MXF").describe()
     assert "round trip" in text and "MXF" in text
+
+
+# --------------------------------------------------------------------------- #
+# the spread is held in bps, the fees in points -- and the difference matters
+# --------------------------------------------------------------------------- #
+
+def test_spread_default_is_flat_in_bps_not_in_points():
+    """The correction: a constant point width is wrong in the flattering direction.
+
+    Measured on TX 2024-2026, the index doubled and the point spread tripled, so
+    bps is the stable unit. A model that held points constant charged 0.92 bps in
+    2026 where the measured cost was 2.33 -- an understatement that grows with the
+    sample, which is the worst shape an error can have.
+    """
+    m = costs.CostModel("TXF", fees_pts_per_side=0.0)
+    low, high = m.round_trip_bps(20_000), m.round_trip_bps(45_000)
+    assert low == pytest.approx(high), "spread default must not scale with price"
+
+    pts = costs.CostModel("TXF", spread_pts=3.0, fees_pts_per_side=0.0)
+    assert pts.round_trip_bps(45_000) < pts.round_trip_bps(20_000)
+
+
+def test_fees_do_shrink_in_bps_as_the_index_rises():
+    """Fees are a fixed NT$ amount, so this one genuinely is price-scaled."""
+    m = costs.CostModel("TXF", spread_bps=0.0, fees_pts_per_side=0.35)
+    assert m.round_trip_bps(45_000) < m.round_trip_bps(20_000)
+    assert m.round_trip_bps(20_000) == pytest.approx(2 * 0.35 / 20_000 * 1e4)
+
+
+def test_measured_spread_overrides_every_default():
+    idx = pd.bdate_range("2024-01-01", periods=5)
+    px = pd.Series(20_000.0, index=idx)
+    measured = pd.Series([1.0, 2.0, 3.0, 4.0, 5.0], index=idx)
+    m = costs.CostModel("TXF", spread_bps=99.0, fees_pts_per_side=0.0)
+
+    out = m.round_trip_bps(px, measured)
+    pd.testing.assert_series_equal(out, measured, check_names=False)
+
+
+def test_measured_spread_leaves_nan_for_the_engine_to_backfill():
+    idx = pd.bdate_range("2024-01-01", periods=3)
+    px = pd.Series(20_000.0, index=idx)
+    measured = pd.Series([1.0, np.nan, 3.0], index=idx)
+    out = costs.CostModel("TXF", fees_pts_per_side=0.0).round_trip_bps(px, measured)
+    assert np.isnan(out.iloc[1])
+
+
+def test_scaled_composes_with_a_measured_spread():
+    """The sensitivity knob must work on measured widths, not only constants."""
+    idx = pd.bdate_range("2024-01-01", periods=4)
+    px = pd.Series(20_000.0, index=idx)
+    measured = pd.Series([1.0, 2.0, 3.0, 4.0], index=idx)
+    m = costs.CostModel("TXF", fees_pts_per_side=0.0)
+
+    base = m.round_trip_bps(px, measured)
+    doubled = m.scaled(2.0).round_trip_bps(px, measured)
+    pd.testing.assert_series_equal(doubled, base * 2, check_names=False)
+
+
+def test_spread_cannot_be_given_in_two_units_at_once():
+    with pytest.raises(ValueError, match="not both"):
+        costs.CostModel("TXF", spread_bps=1.3, spread_pts=3.0)
