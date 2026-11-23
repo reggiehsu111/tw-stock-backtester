@@ -22,6 +22,7 @@ import pandas as pd
 from twbt import cache, equity_panel, panel
 
 ROOT = Path(__file__).resolve().parents[1]
+FIXTURE_UNIVERSE = 150
 OUT = ROOT / "data" / "fixture"
 
 
@@ -53,10 +54,17 @@ def main() -> int:
     except FileNotFoundError:
         eq = None
     if eq is not None and len(eq):
+        # A smaller universe than the app's default 300. The full cross-section
+        # is ~1,850 names a day and 9 MB even after screening, which is too much
+        # to put in a git repository someone has to clone. 150 names is still a
+        # real cross-section -- enough for Rank and Demean to mean something --
+        # and the app fetches the full panel when asked.
         mats = equity_panel.build()
-        univ = equity_panel.liquid_universe(mats)
+        univ = equity_panel.liquid_universe(mats, n=FIXTURE_UNIVERSE)
         keep = set(univ.columns[univ.any()])
         eq = eq[eq["ticker"].isin(keep)]
+        # `name` is the Chinese company name and nothing reads it
+        eq = eq.drop(columns=[c for c in ("name",) if c in eq.columns])
         frames.append(("equities", eq))
 
     for name, df in frames:

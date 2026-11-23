@@ -58,8 +58,10 @@ twbt fetch-equities --start 2024-01-01     # ~30 minutes for three years, cached
 twbt web                                   # -> http://127.0.0.1:8000/build
 ```
 
-**Offline?** A committed fixture ships in `data/fixture/`. Skip step 1 and add
-`--fixture` to steps 2 and 3; everything else is identical.
+**Offline?** A committed fixture ships in `data/fixture/` — three years of futures data
+plus a 150-name equity cross-section, about 6 MB. Skip the fetches and add `--fixture`;
+everything else is identical. The full fetch gives a 300-name universe, the fixture 150,
+so numbers shift slightly while the conclusions do not.
 
 ## Data
 
@@ -151,9 +153,25 @@ understates them: **漲停/跌停** locks mean a blocked trade simply does not h
 weight carries forward — dropping the name instead would silently rebalance into whatever
 *was* tradable, which is a different and much better strategy than the one you tested.
 
-The honest summary: at 62 bps a round trip, most daily-rebalanced cross-sectional signals
-in Taiwan are dead before they start. The builder is designed to show you that quickly
-rather than let you find out slowly.
+### What the bundled presets actually do
+
+Measured over 2024-01 to 2026-11, 698 sessions, ~250 names a day:
+
+| preset | gross Sharpe | net Sharpe | turnover/day | cost / gross edge |
+|---|---|---|---|---|
+| short-term reversal | −1.11 | −5.58 | 27.3% | — |
+| **12-1 momentum** | **+0.66** | **−0.23** | 4.8% | **136%** |
+| low volatility | −0.16 | −0.73 | 4.5% | — |
+| Amihud illiquidity | −2.07 | −3.18 | 5.6% | — |
+| concentrated reversal | −2.04 | −5.36 | 50.0% | — |
+
+Momentum is the instructive row: a genuine gross edge, and costs take 136% of it. On the
+chart the gap between the gross and net lines *is* the tax. Nothing here is a tradable
+strategy, and three years is too short to conclude much in either direction — the point
+is that the tool tells you so in its own output rather than leaving you to notice.
+
+At 62 bps a round trip, most daily-rebalanced cross-sectional signals in Taiwan are dead
+before they start. The builder is designed to show you that in seconds.
 
 ## Layout
 

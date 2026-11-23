@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from twbt import backtest, cache, costs, panel, strategies
+from twbt import backtest, cache, costs, panel, pipeline as pl, strategies, xcosts
 
 pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
 
@@ -181,3 +181,86 @@ def test_using_the_measured_spread_charges_more_than_the_constant(p):
 
     assert with_measured.avg_cost_bps > without.avg_cost_bps
     assert with_measured.net_perf.mean < without.net_perf.mean
+
+
+# --------------------------------------------------------------------------- #
+# the cross-sectional path, over the committed fixture
+# --------------------------------------------------------------------------- #
+
+@pytest.fixture(scope="module")
+def eq():
+    from twbt import equity_panel
+    try:
+        mats = equity_panel.build(fixture=True)
+    except (FileNotFoundError, ValueError) as exc:
+        pytest.skip(f"equity fixture not present: {exc}")
+    return mats, equity_panel.liquid_universe(mats)
+
+
+def test_equity_fixture_is_a_real_cross_section(eq):
+    mats, univ = eq
+    px = mats["close"]
+    assert len(px) > 400, "need enough sessions for a 12-month lookback"
+    assert px.shape[1] > 100, "a cross-sectional rank needs a cross-section"
+    assert univ.sum(axis=1).mean() > 50
+
+
+def test_universe_membership_rotates(eq):
+    """A static universe would be a survivorship screen wearing a mask."""
+    _, univ = eq
+    ever = univ.any()
+    always = univ.all()
+    assert int(ever.sum()) > int(always.sum()), "nobody ever enters or leaves"
+
+
+def test_universe_is_decided_by_trailing_data_only(eq):
+    """Corrupt the future; past membership must not move."""
+    from twbt import equity_panel
+    mats, univ = eq
+    cut = len(mats["close"]) // 2
+
+    poisoned = {k: v.copy() for k, v in mats.items()}
+    poisoned["turnover"].iloc[cut:] = 1.0        # flatten all future liquidity
+    dirty = equity_panel.liquid_universe(poisoned)
+
+    pd.testing.assert_frame_equal(univ.iloc[:cut], dirty.iloc[:cut])
+
+
+def test_delisted_and_newly_listed_names_are_present_as_nan(eq):
+    """Survivorship: a name must not be dropped for failing to span the sample."""
+    mats, _ = eq
+    px = mats["close"]
+    spans_all = px.notna().all()
+    assert not spans_all.all(), (
+        "every name spans the whole sample, which means short-lived names were "
+        "dropped -- that is a survivorship screen")
+
+
+@pytest.mark.parametrize("name", sorted(pl.PRESETS))
+def test_every_preset_runs_on_the_fixture(eq, name):
+    mats, univ = eq
+    src = pl.build_sources(px=mats["close"], vol=mats.get("volume"),
+                           amount=mats.get("turnover"), high=mats.get("high"),
+                           low=mats.get("low"))
+    pipe = pl.Pipeline.from_json(pl.PRESETS[name])
+    _, res = pl.run_pipeline(pipe, src, mats["close"], universe=univ,
+                             cost=xcosts.TWEquityCost())
+    assert res.coverage.mean() > 5, f"{name} held almost nothing"
+    assert np.isfinite(res.sharpe)
+    assert res.net.sum() < res.gross.sum(), "costs must bite"
+
+
+def test_costs_are_what_kills_the_turnover_heavy_preset(eq):
+    """The project's thesis, as an assertion over real data.
+
+    Short-term reversal turns over a quarter of the book a day. Whatever its
+    gross merit, net must be materially worse -- if this ever stops being true
+    the cost model has broken.
+    """
+    mats, univ = eq
+    src = pl.build_sources(px=mats["close"], amount=mats.get("turnover"))
+    pipe = pl.Pipeline.from_json(pl.PRESETS["short-term reversal"])
+    _, res = pl.run_pipeline(pipe, src, mats["close"], universe=univ,
+                             cost=xcosts.TWEquityCost())
+    assert res.avg_turnover > 0.10
+    assert res.sharpe < res.gross_sharpe - 1.0
