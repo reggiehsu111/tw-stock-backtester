@@ -305,3 +305,14 @@ def test_unknown_normalisation_is_refused():
     from twbt import panel as pm
     with pytest.raises(ValueError, match="unknown normalisation"):
         pm.normalize(pd.Series([1.0, 2.0]), "banana")
+
+
+def test_logreturns_blanks_non_positive_ratios_rather_than_warning():
+    """-inf from a bad tick propagates silently through every later operator."""
+    idx = pd.bdate_range("2024-01-02", periods=5)
+    px = pd.DataFrame({"a": [100.0, 50.0, 0.0, 25.0, 30.0]}, index=idx)
+    out = ops.LogReturns(px)
+    assert not np.isinf(out.to_numpy()).any()
+    assert np.isnan(out.iloc[2, 0])          # ratio 0  -> blank
+    assert np.isnan(out.iloc[3, 0])          # divide by 0 -> blank
+    assert out.iloc[1, 0] == pytest.approx(np.log(0.5))

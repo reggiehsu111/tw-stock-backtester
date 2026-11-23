@@ -141,8 +141,17 @@ def Returns(px: pd.DataFrame) -> pd.DataFrame:
 
 
 def LogReturns(px: pd.DataFrame) -> pd.DataFrame:
-    """Log close-to-close return per name. Additive across time, unlike Returns."""
-    return np.log(px / px.shift(1))
+    """Log close-to-close return per name. Additive across time, unlike Returns.
+
+    A non-positive ratio becomes NaN rather than -inf plus a RuntimeWarning.
+    That happens on a delisting, on a bad tick, and whenever this operator is
+    pointed at a series that is not a price -- all cases where a blank is the
+    honest answer and an infinity silently poisons every later operator.
+    """
+    ratio = px / px.shift(1)
+    # `> 0` alone is not enough: a zero previous price gives inf, and inf > 0
+    # is True, so log() returns inf and the guard does nothing.
+    return np.log(ratio.where((ratio > 0) & np.isfinite(ratio)))
 
 
 # --------------------------------------------------------------------------- #

@@ -237,11 +237,28 @@ def cmd_web(args) -> int:
         print("    twbt run --strategy institutional_flow"
               + (" --fixture" if args.fixture else ""))
 
+    # Checking first turns uvicorn's OSError traceback into one actionable line.
+    # The usual cause is an earlier `twbt web` still running, which is not
+    # obvious from "[Errno 48] error while attempting to bind".
+    import socket
+    with socket.socket() as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind((args.host, args.port))
+        except OSError:
+            print(f"error: port {args.port} is already in use on {args.host}.",
+                  file=sys.stderr)
+            print(f"  Another `twbt web` is probably still running. Either stop "
+                  f"it, or pick another port:\n    twbt web --port {args.port + 1}"
+                  + (" --fixture" if args.fixture else ""), file=sys.stderr)
+            return 2
+
     app = create_app(fixture=args.fixture)
     url = f"http://{args.host}:{args.port}"
-    print(f"\n  Signal builder    {url}")
-    print(f"  Futures results   {url}/results\n")
-    print("  Open that address in a browser. Ctrl-C to stop.\n")
+    print(f"\n  Signal builder (equities)   {url}")
+    print(f"  Futures backtest            {url}/futures")
+    print(f"  Saved futures runs          {url}/results\n")
+    print("  Open any of those in a browser. Ctrl-C to stop.\n")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
 
