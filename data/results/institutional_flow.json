@@ -10,7 +10,7 @@
     "n": 36,
     "mean": 8.028655102392186,
     "t": 0.1175805642547539,
-    "sharpe": 0.31108893203272947,
+    "sharpe": 0.07698584037917808,
     "hit_rate": 0.5277777777777778,
     "total": 289.03158368611867,
     "max_drawdown": -2598.1205665217312,
@@ -26,7 +26,7 @@
     "n": 36,
     "mean": 9.301620214639037,
     "t": 0.13621287929724157,
-    "sharpe": 0.36038540398455976,
+    "sharpe": 0.08918534325490544,
     "hit_rate": 0.5277777777777778,
     "total": 334.8583277270053,
     "max_drawdown": -2575.995774148429,
@@ -44,5 +44,5 @@
     "Walk-forward: 0/1 out-of-sample years positive, 6 trades total.",
     "Walk-forward trade count is too low to conclude anything."
   ],
-  "generated": "2026-11-23T10:17:10"
+  "generated": "2026-11-23T10:21:18"
 }

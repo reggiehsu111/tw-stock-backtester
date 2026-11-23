@@ -1,0 +1,60 @@
+"""Build the committed offline fixture from the local cache.
+
+The fixture exists so a reviewer can run everything with no network and get the
+same numbers. It is checked in, so it has to be small: large_trader alone is
+~900k rows across every product TAIFEX lists, of which the panel reads the TX
+all-months all-traders row and nothing else.
+
+Filtering here rather than shipping the raw download is the difference between a
+2 MB repository and a 60 MB one. The filters are deliberately the same ones
+panel.py applies, so the fixture cannot disagree with the live path about what a
+row means.
+
+Run from the repo root after `twbt fetch`:
+
+    python scripts/make_fixture.py
+"""
+
+from pathlib import Path
+
+import pandas as pd
+
+from twbt import cache, panel
+
+ROOT = Path(__file__).resolve().parents[1]
+OUT = ROOT / "data" / "fixture"
+
+
+def main() -> int:
+    OUT.mkdir(parents=True, exist_ok=True)
+    total = 0
+
+    fut = cache.load("futures_daily")
+    fut = fut[fut["product"].astype(str).str.strip() == "TX"]
+
+    maj = cache.load("three_majors")
+    maj = maj[maj["product"].astype(str).str.strip() == panel.PRODUCT_TXF]
+
+    lt = cache.load("large_trader")
+    for c in ("expiry", "trader_type"):
+        lt[c] = pd.to_numeric(lt[c], errors="coerce")
+    lt = lt[(lt["product"].astype(str).str.strip() == panel.LT_PRODUCT_TX)
+            & (lt["expiry"] == panel.EXPIRY_ALL_MONTHS)
+            & (lt["trader_type"] == panel.TRADER_ALL)]
+
+    for name, df in (("futures_daily", fut), ("three_majors", maj),
+                     ("large_trader", lt)):
+        path = OUT / f"{name}.parquet"
+        df.reset_index(drop=True).to_parquet(path, index=False,
+                                             compression="zstd")
+        kb = path.stat().st_size / 1024
+        total += kb
+        print(f"  {name:15s} {len(df):>7,} rows  {kb:>7.1f} KB  "
+              f"{df['date'].min().date()}..{df['date'].max().date()}")
+
+    print(f"  {'total':15s} {'':>7s}       {total:>7.1f} KB")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
