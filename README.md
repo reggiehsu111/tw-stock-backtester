@@ -109,28 +109,53 @@ signals**. `docs/METHOD.md` is explicit about what would be required before beli
 ## The signal builder
 
 Cross-sectional operators — `Rank`, `Demean`, `Neutralize` — are meaningless on a single
-futures contract, so the builder runs on a panel of ~1,850 TW listed names and a
-liquidity-screened universe of 300. You compose a signal by clicking operators into a
-pipeline:
+futures contract, so the builder runs on a panel of ~1,850 TW listed names with a
+point-in-time liquid universe of 300.
+
+Two ways to build a signal, and they share one representation.
+
+**Blocks.** Drag operators from the palette onto the canvas, drag the boxes to reorder,
+edit window parameters in place. Double-click a palette entry to append it. The canvas
+draws a linear chain, which covers most signals.
+
+**Code.** Type the expression directly:
 
 ```
-sig = GrossScale(LongShortBalance(Rank(Neg(InstSum(5, Returns(px))))))
+GrossScale(LongShortBalance(Rank(Neg(InstSum(5, Returns(px))))))
+Rank(Div(Returns(px), InstStdev(20, Returns(px))))
+LongShortBalance(Rank(Returns(px) / InstStdev(20, Returns(px))))
 ```
 
-and get back cumulative P&L, a per-year view with each year's Sharpe, a long/short
-decomposition, and the cost curve. The expression is shown as you build, because the page
-is a way to write code quickly, not a replacement for writing it.
+Arithmetic (`+ - * /`) works on matrices, so expressions can **branch** — a ratio has two
+inputs. That is the one thing the canvas cannot draw, so a tree is code-only and the page
+says so rather than silently dropping a branch. A chain typed as code syncs back to the
+blocks; switching to the Code tab always works in the other direction.
 
-**26 operators** in four groups:
+The editor validates as you type, against names and arity rather than syntax alone:
+
+```
+Rnk(returns)   -> unknown operator 'Rnk' — did you mean 'Rank'? (at column 1)
+Lag(returns)   -> Lag takes 2 argument(s), got 1. Signature: Lag(n, mx)
+Rank(bananas)  -> unknown source 'bananas'. Available: amihud, close, high_low, px, …
+```
+
+**It is parsed, never `eval`'d.** The grammar has numbers, whitelisted names and five
+arithmetic symbols — no attribute access, no indexing, no subscripting. There is nothing
+to escape *to*, which is a stronger guarantee than any denylist of dangerous names.
+`tests/test_expr.py` posts a dozen hostile strings, including
+`().__class__.__bases__[0].__subclasses__()`, and asserts the grammar rejects each.
+
+**35 operators**, 27 of which fit on the canvas:
 
 | group | operators |
 |---|---|
-| time series | `Lag` `InstMean` `InstStdev` `InstSkew` `InstSum` `InstCount` `InstRank` `InstZscore` `InstBeta` `ForwardFill` `Returns` `LogReturns` |
-| cross section | `Rank` `Demean` `Zscore` `Winsorize` `DemeanByGroup` `GroupRank` `Neutralize` |
-| elementwise | `Abs` `Log` `Sqrt` `Sign` `Neg` `Clip` `Finite` `Div` `And` `Or` `Mask` |
+| time series | `Lag` `InstMean` `InstStdev` `InstSkew` `InstSum` `InstCount` `InstRank` `InstZscore` `InstBeta`\* `ForwardFill` `Returns` `LogReturns` |
+| cross section | `Rank` `Demean` `Zscore` `Winsorize` `Neutralize`\* `DemeanByGroup`\* `GroupRank`\* |
+| elementwise | `Abs` `Log` `Sqrt` `Sign` `Neg` `Clip` `Pow` `Finite` `Div`\* `And`\* `Or`\* `Mask`\* |
 | portfolio | `LongShortBalance` `GrossScale` `TopN` |
 
-`Lead` exists for building the *target* of a study and is refused inside a signal.
+\* takes two matrices, so code tab only. `Lead` exists for building the *target* of a
+study and is refused inside a signal.
 
 ### Equity costs are asymmetric, and that is the point
 

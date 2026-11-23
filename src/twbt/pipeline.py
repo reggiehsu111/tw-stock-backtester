@@ -154,6 +154,27 @@ def build_sources(px: pd.DataFrame, vol: pd.DataFrame | None = None,
     return out
 
 
+def simulate_signal(sig: pd.DataFrame, px: pd.DataFrame, *,
+                    exec_shift: int = 1,
+                    cost: xcosts.TWEquityCost | None = None,
+                    enforce_tradability: bool = True,
+                    universe: pd.DataFrame | None = None) -> xsim.XSimResult:
+    """Mask, validate and simulate a signal matrix.
+
+    Shared by the block canvas and the expression editor so the two cannot drift
+    apart on universe masking or on what counts as an unusable signal.
+    """
+    sig = sig.replace([np.inf, -np.inf], np.nan)
+    if universe is not None:
+        sig = sig.where(universe.reindex_like(sig).fillna(False))
+    if sig.notna().sum().sum() == 0:
+        raise PipelineError(
+            "The pipeline produced no usable values. A long trailing window on a "
+            "short sample is the usual cause.")
+    return xsim.simulate(sig, px, exec_shift=exec_shift, cost=cost,
+                         enforce_tradability=enforce_tradability)
+
+
 def run_pipeline(pipe: Pipeline, sources: dict[str, pd.DataFrame],
                  px: pd.DataFrame, *,
                  exec_shift: int = 1,
@@ -180,18 +201,13 @@ def run_pipeline(pipe: Pipeline, sources: dict[str, pd.DataFrame],
         if not isinstance(mx, pd.DataFrame):
             raise PipelineError(f"step {i} ({step.label()}) did not return a matrix")
 
+    res = simulate_signal(mx, px, exec_shift=exec_shift, cost=cost,
+                          enforce_tradability=enforce_tradability,
+                          universe=universe)
+    res.notes = pipe.warnings() + res.notes
     sig = mx.replace([np.inf, -np.inf], np.nan)
     if universe is not None:
         sig = sig.where(universe.reindex_like(sig).fillna(False))
-
-    if sig.notna().sum().sum() == 0:
-        raise PipelineError(
-            "The pipeline produced no usable values. A long trailing window on a "
-            "short sample is the usual cause.")
-
-    res = xsim.simulate(sig, px, exec_shift=exec_shift, cost=cost,
-                        enforce_tradability=enforce_tradability)
-    res.notes = pipe.warnings() + res.notes
     return sig, res
 
 

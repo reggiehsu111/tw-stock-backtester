@@ -105,12 +105,20 @@ def InstZscore(n: int, mx: pd.DataFrame) -> pd.DataFrame:
     return (mx - mu) / sd.where(sd > 0)
 
 
-def InstBeta(n: int, mx: pd.DataFrame, benchmark: pd.Series) -> pd.DataFrame:
-    """Trailing beta of each column against a benchmark series.
+def InstBeta(n: int, mx: pd.DataFrame, benchmark) -> pd.DataFrame:
+    """Trailing beta of each column against a benchmark.
 
-    cov(x, b) / var(b) over the trailing n rows, computed column-wise so a name
-    with a short history gets NaN rather than a beta borrowed from its neighbours.
+    cov(x, b) / var(b) over the trailing n rows, column-wise, so a name with a
+    short history gets NaN rather than a beta borrowed from its neighbours.
+
+    ``benchmark`` may be a Series or a matrix. A matrix is collapsed to its
+    cross-sectional mean, i.e. the equal-weighted market, which is both the
+    thing you usually want and the only form the expression editor can supply —
+    there is no Series-valued source, so a Series-only signature made this
+    operator impossible to type.
     """
+    if isinstance(benchmark, pd.DataFrame):
+        benchmark = benchmark.mean(axis=1)
     b = pd.Series(benchmark).reindex(mx.index).astype(float)
     mp = max(10, n // 3)
     var = b.rolling(n, min_periods=mp).var(ddof=1)
@@ -254,8 +262,14 @@ def Finite(mx: pd.DataFrame) -> pd.DataFrame:
     return mx.replace([np.inf, -np.inf], np.nan)
 
 
-def And(left, right): return (left.astype(bool) & right.astype(bool)).astype(float)
-def Or(left, right): return (left.astype(bool) | right.astype(bool)).astype(float)
+def And(left, right):
+    """1.0 where both matrices are truthy, else 0.0. For combining filters."""
+    return (left.astype(bool) & right.astype(bool)).astype(float)
+
+
+def Or(left, right):
+    """1.0 where either matrix is truthy, else 0.0."""
+    return (left.astype(bool) | right.astype(bool)).astype(float)
 
 
 def Mask(mx: pd.DataFrame, condition: pd.DataFrame) -> pd.DataFrame:
@@ -330,17 +344,22 @@ def Neutralize(mx: pd.DataFrame, factor: pd.DataFrame) -> pd.DataFrame:
 class Op:
     """One operator as the builder sees it: name, params, and a description."""
 
-    def __init__(self, fn, group, params=(), doc="", lookahead=False):
+    def __init__(self, fn, group, params=(), doc="", lookahead=False,
+                 matrix_args=1):
         self.fn = fn
         self.name = fn.__name__
         self.group = group
         self.params = params           # (param_name, type, default) before the matrix
         self.doc = doc or (fn.__doc__ or "").strip().split("\n")[0]
         self.lookahead = lookahead
+        # How many MATRIX inputs this operator takes. Anything above one cannot
+        # appear on the block canvas, which draws a linear chain, but is
+        # perfectly usable in the expression editor.
+        self.matrix_args = matrix_args
 
     def as_dict(self) -> dict:
         return {"name": self.name, "group": self.group, "doc": self.doc,
-                "lookahead": self.lookahead,
+                "lookahead": self.lookahead, "matrix_args": self.matrix_args,
                 "params": [{"name": n, "type": t.__name__, "default": d}
                            for n, t, d in self.params]}
 
@@ -376,6 +395,18 @@ ALL_OPS: dict[str, Op] = {o.name: o for o in [
     Op(LongShortBalance, _PC),
     Op(GrossScale, _PC),
     Op(TopN, _PC, [("n", int, 50)]),
+
+    # Two-matrix operators. Expression editor only -- a linear chain has one
+    # input, so these cannot be a block on the canvas.
+    Op(Div, _EW, matrix_args=2),
+    Op(And, _EW, matrix_args=2),
+    Op(Or, _EW, matrix_args=2),
+    Op(Mask, _EW, matrix_args=2),
+    Op(Neutralize, _XS, matrix_args=2),
+    Op(DemeanByGroup, _XS, matrix_args=2),
+    Op(GroupRank, _XS, matrix_args=2),
+    Op(InstBeta, _TS, [("n", int, 60)], matrix_args=2),
+    Op(Pow, _EW, [("p", float, 2.0)]),
 ]}
 
 # Operators whose first argument is the matrix rather than a parameter.
@@ -417,8 +448,13 @@ def apply_op(name: str, mx: pd.DataFrame, params: dict | None = None) -> pd.Data
     return op.fn(*args, mx)
 
 
-def catalogue() -> list[dict]:
-    """Every operator, grouped, for the builder's palette."""
+def catalogue(max_matrix_args: int | None = None) -> list[dict]:
+    """Every operator, grouped, for the builder's palette.
+
+    ``max_matrix_args=1`` restricts the result to operators that fit on the block
+    canvas. The expression editor passes nothing and gets everything.
+    """
     order = {_TS: 0, _XS: 1, _EW: 2, _PC: 3}
-    return sorted((o.as_dict() for o in ALL_OPS.values()),
-                  key=lambda d: (order.get(d["group"], 9), d["name"]))
+    items = [o.as_dict() for o in ALL_OPS.values()
+             if max_matrix_args is None or o.matrix_args <= max_matrix_args]
+    return sorted(items, key=lambda d: (order.get(d["group"], 9), d["name"]))

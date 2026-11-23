@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
@@ -25,6 +26,7 @@ from . import builder, charts
 
 RESULTS_DIR = Path(__file__).resolve().parents[3] / "data" / "results"
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+STATIC_DIR = Path(__file__).parent / "static"
 
 
 def _load_all() -> dict:
@@ -61,6 +63,8 @@ def _table(df: pd.DataFrame, numeric_nd: int = 2) -> list:
 
 def create_app(fixture: bool = False) -> FastAPI:
     app = FastAPI(title="twbt tearsheet", docs_url=None, redoc_url=None)
+    # served locally rather than from a CDN, so the page works with no network
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     @app.get("/results", response_class=HTMLResponse)
     def index(request: Request):

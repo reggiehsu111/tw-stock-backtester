@@ -33,7 +33,12 @@ def _px(seed=0):
 # the rule: no operator may see the future
 # --------------------------------------------------------------------------- #
 
-SIGNAL_OPS = [n for n, o in ops.ALL_OPS.items() if not o.lookahead]
+# Split by how many matrices an operator consumes: apply_op passes one, so the
+# two-matrix operators need their own test rather than an exemption.
+SIGNAL_OPS = [n for n, o in ops.ALL_OPS.items()
+              if not o.lookahead and o.matrix_args == 1]
+PAIR_OPS = [n for n, o in ops.ALL_OPS.items()
+            if not o.lookahead and o.matrix_args == 2]
 
 
 @pytest.mark.parametrize("name", sorted(SIGNAL_OPS))
@@ -58,6 +63,36 @@ def test_no_operator_sees_the_future(name):
     np.testing.assert_allclose(
         a.fillna(0).to_numpy(), b.fillna(0).to_numpy(), rtol=0, atol=0,
         err_msg=f"{name} leaked the future into the past")
+
+
+@pytest.mark.parametrize("name", sorted(PAIR_OPS))
+def test_two_matrix_operators_do_not_see_the_future_either(name):
+    """Same adversarial test, with the second matrix held constant."""
+    op = ops.ALL_OPS[name]
+    a, b = _mx(seed=1), _mx(seed=2).abs() + 1.0
+    args = [p[1](p[2]) for p in op.params]
+
+    def call(x):
+        return op.fn(*args, x, b) if op.params else op.fn(x, b)
+
+    cut = len(a) // 2
+    clean = call(a)
+    poisoned = a.copy()
+    poisoned.iloc[cut:] = np.random.default_rng(9).normal(5e6, 1e6,
+                                                          (len(a) - cut, a.shape[1]))
+    dirty = call(poisoned)
+    np.testing.assert_allclose(
+        clean.iloc[:cut].fillna(0).to_numpy(),
+        dirty.iloc[:cut].fillna(0).to_numpy(), rtol=0, atol=0,
+        err_msg=f"{name} leaked the future into the past")
+
+
+def test_the_canvas_only_offers_single_matrix_operators():
+    """A linear chain has one input, so a two-matrix operator cannot be a block."""
+    canvas = {c["name"] for c in ops.catalogue(max_matrix_args=1)}
+    assert canvas.isdisjoint(set(PAIR_OPS))
+    assert len(ops.catalogue()) > len(canvas)
+    assert "Div" in {c["name"] for c in ops.catalogue()}
 
 
 def test_lead_is_the_only_lookahead_operator_and_is_refused():

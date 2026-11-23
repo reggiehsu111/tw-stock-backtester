@@ -22,7 +22,7 @@ import pandas as pd
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from .. import equity_panel, ops, pipeline as pl, xcosts, xsim
+from .. import equity_panel, expr as ex, ops, pipeline as pl, xcosts, xsim
 from . import charts
 
 
@@ -43,6 +43,9 @@ class PanelState:
             px=mats["close"], vol=mats.get("volume"), amount=mats.get("turnover"),
             high=mats.get("high"), low=mats.get("low"),
             shares_out=mats.get("shares_out"))
+        # `px` is the conventional name for the price matrix in this vocabulary,
+        # and every example uses it; alias rather than rename so both work
+        sources["px"] = sources["close"]
         return cls(mats=mats, sources=sources, universe=univ,
                    info=equity_panel.describe(mats, univ))
 
@@ -74,7 +77,10 @@ def register(app, templates, fixture: bool = False) -> None:
         except Exception as exc:                        # noqa: BLE001
             info, err = {}, str(exc)
         return templates.TemplateResponse(request, "builder.html", {
-            "catalogue": ops.catalogue(),
+            # the canvas draws a linear chain, so it only offers single-matrix
+            # operators; the code editor gets the full registry
+            "catalogue": ops.catalogue(max_matrix_args=1),
+            "all_ops": ops.catalogue(),
             "sources": pl.SOURCES,
             "presets": pl.PRESETS,
             "info": info,
@@ -82,6 +88,39 @@ def register(app, templates, fixture: bool = False) -> None:
             "cost": xcosts.TWEquityCost().describe(),
             "cost_rows": xcosts.TWEquityCost().breakdown().to_dict("records"),
             "fixture": fixture,
+        })
+
+    @router.post("/api/parse")
+    async def parse_only(request: Request):
+        """Validate an expression without running it, and flatten it if it is a chain.
+
+        The editor calls this as you type. It is cheap -- parsing never touches
+        the data -- so the page can tell you about a typo before you run anything.
+        """
+        try:
+            body = await request.json()
+            src = str(body.get("expression", ""))
+        except Exception:                               # noqa: BLE001
+            return JSONResponse({"error": "malformed request body"}, status_code=400)
+
+        if not src.strip():
+            return JSONResponse({"ok": False, "error": "the expression is empty"})
+        try:
+            node = ex.parse(src)
+            # names and arity too: parsing alone would call Rnk(returns) valid
+            ex.validate(node, set(panel().sources) if state["panel"] is not None
+                        else set(pl.SOURCES) | {"px"})
+        except ex.ExprError as exc:
+            return JSONResponse({"ok": False, "error": str(exc), "pos": exc.pos})
+        except Exception as exc:                        # noqa: BLE001
+            return JSONResponse({"ok": False, "error": str(exc)})
+
+        chain = ex.to_chain(node)
+        return JSONResponse({
+            "ok": True,
+            "normalised": ex.to_source(node),
+            "chain": ({"source": chain.source, "steps": chain.steps}
+                      if chain else None),
         })
 
     @router.post("/api/run")
@@ -92,10 +131,13 @@ def register(app, templates, fixture: bool = False) -> None:
         except Exception:                               # noqa: BLE001
             return JSONResponse({"error": "malformed request body"}, status_code=400)
 
-        try:
-            pipe = pl.Pipeline.from_json(body)
-        except pl.PipelineError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
+        expression = str(body.get("expression") or "").strip()
+        pipe = None
+        if not expression:
+            try:
+                pipe = pl.Pipeline.from_json(body)
+            except pl.PipelineError as exc:
+                return JSONResponse({"error": str(exc)}, status_code=400)
 
         try:
             p = panel()
@@ -115,11 +157,22 @@ def register(app, templates, fixture: bool = False) -> None:
             return JSONResponse({"error": f"bad option: {exc}"}, status_code=400)
 
         try:
-            sig, res = pl.run_pipeline(
-                pipe, p.sources, p.mats["close"], exec_shift=exec_shift,
-                cost=cost, enforce_tradability=tradability, universe=p.universe)
-        except pl.PipelineError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
+            if expression:
+                sig = ex.run(expression, p.sources)
+                shown = ex.to_source(ex.parse(expression))
+                res = pl.simulate_signal(
+                    sig, p.mats["close"], exec_shift=exec_shift, cost=cost,
+                    enforce_tradability=tradability, universe=p.universe)
+            else:
+                sig, res = pl.run_pipeline(
+                    pipe, p.sources, p.mats["close"], exec_shift=exec_shift,
+                    cost=cost, enforce_tradability=tradability,
+                    universe=p.universe)
+                shown = pipe.expression()
+        except (pl.PipelineError, ex.ExprError) as exc:
+            return JSONResponse({"error": str(exc),
+                                 "pos": getattr(exc, "pos", None)},
+                                status_code=400)
         except Exception as exc:                        # noqa: BLE001
             return JSONResponse({"error": f"{type(exc).__name__}: {exc}"},
                                 status_code=400)
@@ -128,7 +181,7 @@ def register(app, templates, fixture: bool = False) -> None:
         by_year = res.by_year()
 
         return JSONResponse({
-            "expression": pipe.expression(),
+            "expression": shown,
             "elapsed_ms": int((time.time() - t0) * 1000),
             "verdict": [{"text": v, "fail": v.startswith(("FAILS", "SAME-CLOSE"))}
                         for v in res.verdict()],
