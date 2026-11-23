@@ -191,20 +191,21 @@ weight carries forward — dropping the name instead would silently rebalance in
 
 ### What the bundled presets actually do
 
-Measured over 2024-01 to 2026-11, 698 sessions, ~250 names a day:
+Measured over 2024-01 to 2026-11, 698 sessions, ~290 names a day:
 
-| preset | gross Sharpe | net Sharpe | turnover/day | cost / gross edge |
+| preset | gross Sharpe | net Sharpe | turnover/day | names |
 |---|---|---|---|---|
-| short-term reversal | −1.11 | −5.58 | 27.3% | — |
-| **12-1 momentum** | **+0.66** | **−0.23** | 4.8% | **136%** |
-| low volatility | −0.16 | −0.73 | 4.5% | — |
-| Amihud illiquidity | −2.07 | −3.18 | 5.6% | — |
-| concentrated reversal | −2.04 | −5.36 | 50.0% | — |
+| short-term reversal | −0.57 | −4.99 | 26.6% | 282 |
+| **12-1 momentum** | **+0.47** | **−0.03** | 3.2% | 252 |
+| low volatility | −0.37 | −0.68 | 2.4% | 288 |
+| Amihud illiquidity | −0.94 | −1.82 | 4.0% | 288 |
+| concentrated reversal | −1.48 | −4.66 | 54.0% | 12 |
 
-Momentum is the instructive row: a genuine gross edge, and costs take 136% of it. On the
-chart the gap between the gross and net lines *is* the tax. Nothing here is a tradable
-strategy, and three years is too short to conclude much in either direction — the point
-is that the tool tells you so in its own output rather than leaving you to notice.
+Momentum is the instructive row: a genuine gross edge, and costs take 107% of it — it
+ends up a hair below break-even. On the chart the gap between the gross and net lines
+*is* the tax. Nothing here is a tradable strategy, and three years is too short to
+conclude much in either direction; the point is that the tool says so in its own output
+rather than leaving you to notice.
 
 At 62 bps a round trip, most daily-rebalanced cross-sectional signals in Taiwan are dead
 before they start. The builder is designed to show you that in seconds.
