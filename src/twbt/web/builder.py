@@ -45,6 +45,7 @@ class PanelState:
     sources: dict
     universe: pd.DataFrame
     info: dict
+    factors: dict
 
     @classmethod
     def load(cls, fixture: bool = False, universe_size: int = 300) -> PanelState:
@@ -58,7 +59,8 @@ class PanelState:
         # and every example uses it; alias rather than rename so both work
         sources["px"] = sources["close"]
         return cls(mats=mats, sources=sources, universe=univ,
-                   info=equity_panel.describe(mats, univ))
+                   info=equity_panel.describe(mats, univ),
+                   factors=equity_panel.factor_matrices(mats))
 
 
 def _rate(value, default: float, cap: float = 0.5) -> float:
@@ -105,6 +107,16 @@ def register(app, templates, fixture: bool = False) -> None:
         except Exception as exc:                        # noqa: BLE001
             info, err = {}, str(exc)
 
+        # a coverage gap must be stated on the page, not left to be inferred
+        # from a strange-looking universe
+        gaps = (info or {}).get("gaps") or {}
+        gap_warning = None
+        if gaps:
+            detail = "; ".join(
+                i18n.t(i18n.UI, "gap_sessions", lang).format(board=b, n=n)
+                for b, n in sorted(gaps.items()))
+            gap_warning = i18n.t(i18n.UI, "data_gap", lang).format(detail=detail)
+
         cat = ops.catalogue(max_matrix_args=1)
         every = ops.catalogue()
         for c in cat + every:
@@ -140,6 +152,7 @@ def register(app, templates, fixture: bool = False) -> None:
             "sources": pl.SOURCES,
             "presets": pl.PRESETS,
             "info": info,
+            "gap_warning": gap_warning,
             "load_error": err,
             "cost": xcosts.TWEquityCost().describe(),
             "cost_rows": xcosts.TWEquityCost().breakdown().to_dict("records"),
@@ -269,6 +282,37 @@ def register(app, templates, fixture: bool = False) -> None:
         except Exception:                               # noqa: BLE001
             pass
 
+        sectors, tops, tshorts, conc, rsharpe = {}, {}, {}, {}, None
+        csweep = hsweep = expo = None
+        try:
+            if "sector" in p.mats:
+                allsec = xsim.group_pnl(res.weights, res.returns, p.mats["sector"])
+                # 35 sectors is an unreadable chart; show the ones that moved
+                sectors = dict(sorted(allsec.items(),
+                                      key=lambda kv: -abs(float(kv[1].iloc[-1])))[:8])
+        except Exception:                               # noqa: BLE001
+            pass
+        try:
+            tops = xsim.top_names(res.weights, res.returns, 5, "long")
+            tshorts = xsim.top_names(res.weights, res.returns, 5, "short")
+            conc = xsim.concentration(res.weights)
+            rsharpe = xsim.rolling_sharpe(res.net)
+        except Exception:                               # noqa: BLE001
+            pass
+        try:
+            csweep = xsim.cost_sweep(sig, p.mats["close"], cost,
+                                     exec_shift=exec_shift,
+                                     enforce_tradability=tradability)
+            hsweep = xsim.hold_sweep(sig, p.mats["close"], cost=cost,
+                                     exec_shift=exec_shift,
+                                     enforce_tradability=tradability)
+        except Exception:                               # noqa: BLE001
+            pass
+        try:
+            expo = xsim.factor_exposures(res.weights, p.factors)
+        except Exception:                               # noqa: BLE001
+            pass
+
         return JSONResponse({
             "expression": shown,
             "elapsed_ms": int((time.time() - t0) * 1000),
@@ -345,6 +389,39 @@ def register(app, templates, fixture: bool = False) -> None:
                     C("l_untraded"), res.blocked["untraded_gmv"], C("untraded"),
                     C("y_fraction"), window=20)
                     if res.blocked else charts.empty("—")),
+
+                # attribution
+                "sectors": (charts.groups(sectors, title=C("sectors"),
+                                          ylab=C("y_cum_return"))
+                            if sectors else charts.empty("—")),
+                "top_long": (charts.groups(tops, title=C("top_long"),
+                                           ylab=C("y_cum_return"))
+                             if tops else charts.empty("—")),
+                "top_short": (charts.groups(tshorts, title=C("top_short"),
+                                            ylab=C("y_cum_return"))
+                              if tshorts else charts.empty("—")),
+                "concentration": (charts.counts(
+                    conc.get("max_weight"), conc.get("top10_share"),
+                    title=C("concentration"),
+                    labels=(C("l_max_weight"), C("l_top10")), ylab=C("y_share"))
+                    if conc else charts.empty("—")),
+
+                # stability and sensitivity
+                "roll_sharpe": (charts.series_panel(
+                    C("y_sharpe"), rsharpe, C("roll_sharpe"), C("y_sharpe"))
+                    if rsharpe is not None and len(rsharpe) else charts.empty("—")),
+                "cost_sweep": (charts.table_line(
+                    csweep, "factor", "sharpe", C("cost_sweep"), C("y_sharpe"),
+                    C("x_cost"), C("y_sharpe"))
+                    if csweep is not None and len(csweep) else charts.empty("—")),
+                "hold_sweep": (charts.table_line(
+                    hsweep, "hold", "sharpe", C("hold_sweep"), C("y_sharpe"),
+                    C("x_hold"), C("y_sharpe"))
+                    if hsweep is not None and len(hsweep) else charts.empty("—")),
+                "exposures": (charts.groups(
+                    {c: expo[c] for c in expo.columns}, title=C("exposures"),
+                    ylab=C("y_share"))
+                    if expo is not None and len(expo) else charts.empty("—")),
             },
         })
 

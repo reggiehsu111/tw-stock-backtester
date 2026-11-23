@@ -26,6 +26,7 @@ from __future__ import annotations
 import pandas as pd
 
 from . import cache
+from .sources import sectors as sectors_src
 
 # Fields pivoted into matrices. Keys are cache columns, values are matrix names.
 FIELDS = {
@@ -65,11 +66,32 @@ def build(root=None, fixture: bool = False,
     for k in out:
         out[k] = out[k].reindex(index=ref.index, columns=ref.columns)
 
+    try:
+        tbl = cache.load("sectors", **kw)
+        out["sector"] = sectors_src.sector_matrix(ref.columns, ref.index, tbl)
+    except FileNotFoundError:
+        pass
+
     if "board" in df.columns:
         out["board"] = (df.pivot_table(index="date", columns="ticker",
                                        values="board", aggfunc="last")
                         .reindex(index=ref.index, columns=ref.columns))
+
+    out["_coverage"] = coverage(df)
     return out
+
+
+def coverage(df: pd.DataFrame) -> pd.DataFrame:
+    """Names present per session per board.
+
+    Exposed so a caller can see a partial fetch rather than discover it as a
+    strange universe. A venue missing on half the sessions looks exactly like a
+    normal panel until you ask why the largest stock in the market keeps
+    dropping out of a liquidity screen.
+    """
+    if "board" not in df.columns:
+        return pd.DataFrame()
+    return df.groupby(["date", "board"]).size().unstack(fill_value=0)
 
 
 def liquid_universe(mats: dict[str, pd.DataFrame],
@@ -103,6 +125,38 @@ def liquid_universe(mats: dict[str, pd.DataFrame],
     return in_univ.fillna(False)
 
 
+def factor_matrices(mats: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    """The handful of obvious factors, built from the panel itself.
+
+    Not a factor model -- just the four things a cross-sectional signal most
+    often turns out to be by accident. Every one is lagged, because an exposure
+    computed from today's data would be measuring the book against information
+    it did not have.
+
+        size        market value where shares are known, else price
+        liquidity   trailing median turnover
+        volatility  trailing standard deviation of returns
+        momentum    trailing 60-day return
+    """
+    px = mats["close"]
+    out: dict[str, pd.DataFrame] = {}
+
+    shares = mats.get("shares_out")
+    if shares is not None and shares.notna().any().any():
+        out["size"] = (px * shares).shift(1)
+    else:
+        out["size"] = px.shift(1)
+
+    turn = mats.get("turnover")
+    if turn is not None:
+        out["liquidity"] = turn.shift(1).rolling(60, min_periods=20).median()
+
+    r = px.pct_change()
+    out["volatility"] = r.shift(1).rolling(60, min_periods=20).std(ddof=1)
+    out["momentum"] = px.shift(1).pct_change(60)
+    return out
+
+
 def describe(mats: dict[str, pd.DataFrame],
              universe: pd.DataFrame | None = None) -> dict:
     """Summary of the panel, for the page header."""
@@ -117,4 +171,9 @@ def describe(mats: dict[str, pd.DataFrame],
     if universe is not None:
         info["universe_per_day"] = float(universe.sum(axis=1).mean())
         info["universe_names_ever"] = int(universe.any().sum())
+
+    cov = mats.get("_coverage")
+    if cov is not None and len(cov):
+        gaps = {str(b): int((cov[b] == 0).sum()) for b in cov.columns}
+        info["gaps"] = {b: n for b, n in gaps.items() if n}
     return info

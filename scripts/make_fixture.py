@@ -67,14 +67,24 @@ def main() -> int:
         eq = eq.drop(columns=[c for c in ("name",) if c in eq.columns])
         frames.append(("equities", eq))
 
+    # the sector snapshot, trimmed to names the fixture actually contains
+    try:
+        sec = cache.load("sectors")
+    except FileNotFoundError:
+        sec = None
+    if sec is not None and len(sec) and eq is not None and len(eq):
+        sec = sec[sec["ticker"].isin(set(eq["ticker"]))]
+        frames.append(("sectors", sec))
+
     for name, df in frames:
         path = OUT / f"{name}.parquet"
         df.reset_index(drop=True).to_parquet(path, index=False,
                                              compression="zstd")
         kb = path.stat().st_size / 1024
         total += kb
-        print(f"  {name:15s} {len(df):>7,} rows  {kb:>7.1f} KB  "
-              f"{df['date'].min().date()}..{df['date'].max().date()}")
+        span = (f"{df['date'].min().date()}..{df['date'].max().date()}"
+                if "date" in df.columns else "snapshot")
+        print(f"  {name:15s} {len(df):>7,} rows  {kb:>7.1f} KB  {span}")
 
     print(f"  {'total':15s} {'':>7s}       {total:>7.1f} KB")
     return 0

@@ -488,3 +488,20 @@ def bars(labels, values, title: str, ylab: str = "") -> str:
         body.append(f'<text class="axlab" x="{(PAD_L + W - PAD_R)/2}" y="{H - 4}">'
                     f'{_esc(ylab)}</text>')
     return _svg("".join(body), title)
+
+
+def exposure_bars(avg: pd.Series, title: str, ylab: str = "") -> str:
+    """Average factor exposure, as a bar per factor."""
+    avg = pd.Series(avg).dropna()
+    if avg.empty:
+        return empty("—")
+    return bars(list(avg.index), list(avg.to_numpy()), title, ylab)
+
+
+def table_line(df: pd.DataFrame, x: str, y: str, title: str, ylab: str,
+               xlab: str = "", label: str = "") -> str:
+    """One column of a small results table, plotted against another."""
+    if df is None or len(df) == 0:
+        return empty("—")
+    s = pd.Series(df[y].to_numpy(), index=df[x].to_numpy())
+    return _simple({label or y: s}, title, ylab, xlab, x_is_date=False)

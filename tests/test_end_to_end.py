@@ -264,3 +264,58 @@ def test_costs_are_what_kills_the_turnover_heavy_preset(eq):
                              cost=xcosts.TWEquityCost())
     assert res.avg_turnover > 0.10
     assert res.sharpe < res.gross_sharpe - 1.0
+
+
+# --------------------------------------------------------------------------- #
+# data completeness
+# --------------------------------------------------------------------------- #
+
+def test_no_venue_is_missing_from_whole_sessions():
+    """The silent-fetch-failure regression test.
+
+    A bare `except: pass` in the concurrent fetcher let TWSE refuse half the
+    requests under load with no error anywhere. The cache then held 350 of 698
+    sessions with no TSE data, every chart still rendered, and the only visible
+    symptom was TSMC dropping out of a top-300-by-turnover universe on 63% of
+    days.
+    """
+    from twbt import cache, equity_panel
+
+    try:
+        df = cache.load("equities", fixture=True)
+    except FileNotFoundError:
+        pytest.skip("equity fixture not present")
+
+    cov = equity_panel.coverage(df)
+    if cov.empty:
+        pytest.skip("no board labels in fixture")
+
+    for board in cov.columns:
+        blank = int((cov[board] == 0).sum())
+        assert blank == 0, (
+            f"{board} is absent from {blank}/{len(cov)} sessions -- "
+            "that is a partial fetch, not a quiet market")
+
+
+def test_the_largest_names_stay_in_a_liquidity_universe(eq):
+    """A sanity check that doubles as a completeness check.
+
+    TSMC cannot leave a top-300-by-turnover screen. If it does, the panel is
+    missing sessions rather than the screen being wrong.
+    """
+    mats, univ = eq
+    if "2330" not in univ.columns:
+        pytest.skip("2330 not in the fixture universe")
+    tradable = univ["2330"].sum()
+    sessions = len(univ)
+    assert tradable > 0.9 * sessions, (
+        f"2330 in the universe on only {tradable}/{sessions} sessions")
+
+
+def test_panel_description_reports_gaps(eq):
+    """A gap must be visible in the summary, not discovered by accident."""
+    from twbt import equity_panel
+    mats, univ = eq
+    info = equity_panel.describe(mats, univ)
+    assert "gaps" not in info or not info["gaps"], (
+        f"panel has coverage gaps: {info.get('gaps')}")

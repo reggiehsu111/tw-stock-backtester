@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .sources import equities, taifex
+from .sources import equities, sectors, taifex
 
 # datasets that come from the equity cross-section rather than TAIFEX
 EQUITY_DATASETS = ("equities",)
@@ -27,6 +27,22 @@ FIXTURE_DIR = Path(__file__).resolve().parents[2] / "data" / "fixture"
 
 def _path(name: str, root: Path) -> Path:
     return root / f"{name}.parquet"
+
+
+def update_snapshot(name: str, root: Path | None = None) -> pd.DataFrame:
+    """Refresh a dataset that has no date axis, such as the sector table.
+
+    Overwrites rather than merging, because a snapshot has no history to keep
+    and a stale row silently mislabels a name.
+    """
+    root = root or DEFAULT_DIR
+    root.mkdir(parents=True, exist_ok=True)
+    if name != "sectors":
+        raise KeyError(f"{name} is not a snapshot dataset")
+    df = sectors.fetch()
+    if len(df):
+        df.to_parquet(_path(name, root), index=False)
+    return df
 
 
 def load(name: str, root: Path | None = None, fixture: bool = False) -> pd.DataFrame:
@@ -41,6 +57,8 @@ def load(name: str, root: Path | None = None, fixture: bool = False) -> pd.DataF
                if fixture else "Run `twbt fetch` first, or pass --fixture.")
         )
     df = pd.read_parquet(p)
+    if "date" not in df.columns:            # a snapshot, e.g. the sector table
+        return df.reset_index(drop=True)
     return df.sort_values("date").reset_index(drop=True)
 
 

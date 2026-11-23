@@ -44,9 +44,24 @@ UA = ("Mozilla/5.0 (compatible; tw-stock-backtester/0.1; "
       "+https://github.com/reggiehsu111/tw-stock-backtester)")
 PACE_SEC = 1.1
 RETRIES = 3
-# Small on purpose. What a public service minds is simultaneous load, not total
-# requests, and six is well inside what a browser opens against one host.
-WORKERS = 6
+
+# Per-venue concurrency, because the two services tolerate very different loads.
+#
+# TWSE is SERIAL. Six workers against it looked fine -- every request either
+# returned data or raised -- and it quietly got the client WAF-blocked for half
+# the range, which arrived as HTTP 307 to a page reading 因為安全性考量，您所執行
+# 的頁面無法呈現. Nothing in the response is a 4xx or 5xx, so raise_for_status()
+# is silent and only the JSON decode fails. Going fast here is how the cache
+# ended up missing 350 of 698 sessions.
+#
+# TPEX handled the same concurrency without complaint and is left parallel.
+WORKERS_TWSE = 1
+WORKERS_TPEX = 4
+WORKERS = 4                       # kept for callers that pass nothing
+
+
+class BlockedError(RuntimeError):
+    """The venue is refusing us, and retrying sooner will not help."""
 
 TWSE_URL = "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX"
 TPEX_URL = "https://www.tpex.org.tw/www/zh-tw/afterTrading/otc"
@@ -83,14 +98,35 @@ def _clean(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _is_block(r: requests.Response) -> bool:
+    """Is this TWSE's rate-limit page rather than data?
+
+    It answers with a 307 and an HTML body, so the status code is not an error
+    and raise_for_status() says nothing. Detecting it explicitly is the
+    difference between "back off" and "retry three times, then record a failure
+    and keep hammering".
+    """
+    if r.status_code in (301, 302, 307, 308):
+        return True
+    ctype = r.headers.get("content-type", "")
+    return "json" not in ctype and b"\xe5\xae\x89\xe5\x85\xa8\xe6\x80\xa7" in r.content[:600]
+
+
 def _get(url: str, params: dict, session: requests.Session) -> dict | None:
     last = None
     for attempt in range(RETRIES):
         try:
             r = session.get(url, params=params, headers={"User-Agent": UA},
                             timeout=45)
+            if _is_block(r):
+                raise BlockedError(
+                    f"{url.rsplit('/', 1)[-1]} is refusing requests "
+                    f"(HTTP {r.status_code}). Wait before retrying; fetching "
+                    "faster is what causes this.")
             r.raise_for_status()
             return r.json()
+        except BlockedError:
+            raise                                       # retrying makes it worse
         except Exception as exc:                        # noqa: BLE001
             last = exc
             if attempt < RETRIES - 1:
@@ -153,42 +189,93 @@ def _is_equity(ticker: str) -> bool:
     return len(t) == 4 and t.isdigit() and not t.startswith("00")
 
 
-def _fetch_one_day(d: date, session: requests.Session) -> pd.DataFrame:
-    """Both venues for one date, as a single frame. Empty on a non-trading day."""
-    parts = []
-    for fn in (fetch_twse_day, fetch_tpex_day):
-        try:
-            parts.append(fn(d, session))
-        except Exception:                               # noqa: BLE001
-            pass                                        # reported by the caller
-    parts = [p for p in parts if len(p)]
-    if not parts:
-        return pd.DataFrame()
-    day = pd.concat(parts, ignore_index=True)
-    return day[day["ticker"].map(_is_equity)]
+def _fetch_venue(fn, days, workers: int, verbose: bool, label: str,
+                 checkpoint=None, checkpoint_every: int = 40):
+    """Fetch one venue over a list of dates, at that venue's own concurrency.
+
+    Returns (frames, failures). A ``BlockedError`` stops the pass immediately:
+    the service is telling us to go away, and the correct response is to stop,
+    not to work through the remaining three hundred dates collecting failures.
+    """
+    out, failed, done = [], [], 0
+    local = threading.local()
+
+    def worker(d: date):
+        if not hasattr(local, "session"):
+            local.session = requests.Session()
+        time.sleep(PACE_SEC * (0.5 + random.random()))
+        return d, fn(d, local.session)
+
+    if workers <= 1:                       # serial, and deliberately so for TWSE
+        sess = requests.Session()
+        for d in days:
+            try:
+                frame = fn(d, sess)
+            except BlockedError as exc:
+                if verbose:
+                    print(f"    {label}: BLOCKED at {d} -- {exc}", flush=True)
+                failed.append(d)
+                break
+            except Exception:              # noqa: BLE001
+                failed.append(d)
+                frame = None
+            if frame is not None and len(frame):
+                out.append(frame)
+            done += 1
+            if verbose and done % 25 == 0:
+                print(f"    {label}: {done}/{len(days)} days, "
+                      f"{sum(len(x) for x in out):,} rows, "
+                      f"{len(failed)} failed", flush=True)
+            if checkpoint and out and done % checkpoint_every == 0:
+                checkpoint(_combine(out))
+            time.sleep(PACE_SEC)
+        sess.close()
+        return out, failed
+
+    blocked = False
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(worker, d): d for d in days}
+        for fut in as_completed(futures):
+            d = futures[fut]
+            try:
+                _, frame = fut.result()
+            except BlockedError as exc:
+                if not blocked and verbose:
+                    print(f"    {label}: BLOCKED -- {exc}", flush=True)
+                blocked = True
+                failed.append(d)
+                continue
+            except Exception:              # noqa: BLE001
+                failed.append(d)
+                continue
+            if len(frame):
+                out.append(frame)
+            done += 1
+            if verbose and done % 25 == 0:
+                print(f"    {label}: {done}/{len(days)} days, "
+                      f"{sum(len(x) for x in out):,} rows, "
+                      f"{len(failed)} failed", flush=True)
+            if checkpoint and out and done % checkpoint_every == 0:
+                checkpoint(_combine(out))
+    return out, failed
 
 
 def fetch_range(start: date, end: date, session: requests.Session | None = None,
-                verbose: bool = True, workers: int = WORKERS,
+                verbose: bool = True, workers: int | None = None,
                 checkpoint=None, checkpoint_every: int = 40) -> pd.DataFrame:
     """Daily cross-section over [start, end], both boards, ordinary shares only.
 
     Returns long format: one row per (date, ticker).
 
-    Two things make this bearable, both learned by waiting for the serial version.
+    The two venues are fetched in separate passes at their own concurrency --
+    TWSE serially, TPEX in parallel -- because they tolerate very different
+    loads and a shared setting has to be as slow as the slower one or as broken
+    as the faster one. See WORKERS_TWSE for what "broken" looked like.
 
-    CONCURRENCY. This is one request per venue per trading day, so three years is
-    about 1,500 requests. Done one at a time at a polite pace that is the better
-    part of an hour, and almost all of it is spent waiting on the network rather
-    than on anybody's server. A small thread pool collapses it to a few minutes
-    while keeping the number of *simultaneous* requests low, which is the thing a
-    public service actually cares about. Each worker holds its own session,
-    because requests.Session is not thread-safe.
-
-    CHECKPOINTS. ``checkpoint`` is called with the frame so far every
-    ``checkpoint_every`` completed days. A long fetch that writes nothing until
-    the end has no progress to show and nothing to keep if it is interrupted,
-    which is exactly what happened the first time.
+    ``checkpoint`` is called with the frame so far every ``checkpoint_every``
+    days of each pass. A long fetch that writes nothing until the end has no
+    progress to show and nothing to keep if it stops, which has now cost this
+    project two runs.
 
     Weekends are skipped without a request. Other non-trading days cost one
     request and return nothing, which is the cheapest way to discover the
@@ -198,39 +285,54 @@ def fetch_range(start: date, end: date, session: requests.Session | None = None,
     if not days:
         return pd.DataFrame(columns=["date", "ticker"])
 
-    out: list[pd.DataFrame] = []
-    done = 0
-    local = threading.local()
+    collected: list[pd.DataFrame] = []
 
-    def worker(d: date) -> pd.DataFrame:
-        if not hasattr(local, "session"):
-            local.session = session or requests.Session()
-        # stagger so N workers do not all fire at the same instant
-        time.sleep(PACE_SEC * random.random())
-        return _fetch_one_day(d, local.session)
+    def chained(partial):
+        if checkpoint:
+            checkpoint(_combine(collected + [partial]) if collected else partial)
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(worker, d): d for d in days}
-        for fut in as_completed(futures):
-            d = futures[fut]
-            try:
-                day = fut.result()
-            except Exception as exc:                    # noqa: BLE001
-                if verbose:
-                    print(f"    {d}: {exc}")
-                continue
-            if len(day):
-                out.append(day)
-            done += 1
-            if verbose and done % 25 == 0:
-                print(f"    {done}/{len(days)} days, "
-                      f"{sum(len(x) for x in out):,} rows", flush=True)
-            if checkpoint and out and done % checkpoint_every == 0:
-                checkpoint(_combine(out))
+    frames_tse, failed_tse = _fetch_venue(
+        fetch_twse_day, days, WORKERS_TWSE, verbose, "TSE",
+        chained, checkpoint_every)
+    collected += frames_tse
 
-    if not out:
+    frames_otc, failed_otc = _fetch_venue(
+        fetch_tpex_day, days, workers or WORKERS_TPEX, verbose, "OTC",
+        chained, checkpoint_every)
+    collected += frames_otc
+
+    if verbose:
+        for label, failed in (("TSE", failed_tse), ("OTC", failed_otc)):
+            if failed:
+                print(f"    WARNING: {label} failed on {len(failed)}/{len(days)} "
+                      f"days, first {failed[0]}", flush=True)
+
+    if not collected:
         return pd.DataFrame(columns=["date", "ticker"])
-    return _combine(out)
+    combined = _combine(collected)
+    combined = combined[combined["ticker"].map(_is_equity)]
+    _warn_on_gaps(combined, verbose)
+    return combined.reset_index(drop=True)
+
+
+def _warn_on_gaps(df: pd.DataFrame, verbose: bool = True) -> dict:
+    """Report sessions where a venue is entirely absent.
+
+    A partial fetch is indistinguishable from a quiet market unless something
+    counts it, and the shape of this particular failure -- one venue missing on
+    half the days -- produced a universe that silently excluded TSMC from 63% of
+    sessions while every chart still rendered.
+    """
+    if df.empty or "board" not in df.columns:
+        return {}
+    per = df.groupby(["date", "board"]).size().unstack(fill_value=0)
+    gaps = {str(b): int((per[b] == 0).sum()) for b in per.columns}
+    if verbose:
+        for board, n in sorted(gaps.items()):
+            if n:
+                print(f"    WARNING: {board} missing on {n}/{len(per)} sessions",
+                      flush=True)
+    return gaps
 
 
 def _combine(frames: list[pd.DataFrame]) -> pd.DataFrame:

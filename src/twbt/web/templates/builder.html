@@ -17,6 +17,8 @@
   round trip {{ "%.0f"|format(cost_rows[-1].bps) }} bps
 </p>
 
+{% if gap_warning %}<p class="status bad datagap">{{ gap_warning }}</p>{% endif %}
+
 <div class="builder">
 
   <!-- ---------------- palette ---------------- -->
@@ -191,6 +193,30 @@
       <figcaption>{{ CAP('blocked') }}</figcaption></figure>
     <figure class="fig"><div id="c_untraded"></div>
       <figcaption>{{ CAP('untraded') }}</figcaption></figure>
+  </div>
+
+  <h2>{{ T('attribution') }}</h2>
+  <div class="grid4">
+    <figure class="fig"><div id="c_sectors"></div>
+      <figcaption>{{ CAP('sectors') }}</figcaption></figure>
+    <figure class="fig"><div id="c_exposures"></div>
+      <figcaption>{{ CAP('exposures') }}</figcaption></figure>
+    <figure class="fig"><div id="c_top_long"></div>
+      <figcaption>{{ CAP('top_long') }}</figcaption></figure>
+    <figure class="fig"><div id="c_top_short"></div>
+      <figcaption>{{ CAP('top_short') }}</figcaption></figure>
+  </div>
+
+  <h2>{{ T('stability') }}</h2>
+  <div class="grid4">
+    <figure class="fig"><div id="c_roll_sharpe"></div>
+      <figcaption>{{ CAP('roll_sharpe') }}</figcaption></figure>
+    <figure class="fig"><div id="c_cost_sweep"></div>
+      <figcaption>{{ CAP('cost_sweep') }}</figcaption></figure>
+    <figure class="fig"><div id="c_hold_sweep"></div>
+      <figcaption>{{ CAP('hold_sweep') }}</figcaption></figure>
+    <figure class="fig"><div id="c_concentration"></div>
+      <figcaption>{{ CAP('concentration') }}</figcaption></figure>
   </div>
 
   <h2>{{ T('statistics') }}</h2>

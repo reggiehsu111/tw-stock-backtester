@@ -91,6 +91,13 @@ def cmd_fetch_equities(args) -> int:
     if len(df):
         print(f"\n  {len(df):,} rows, {df['date'].nunique():,} sessions, "
               f"{df['ticker'].nunique():,} tickers")
+    # one request per venue, so it rides along with the equity fetch
+    try:
+        sec = cache.update_snapshot("sectors")
+        print(f"  sectors: {len(sec):,} tickers classified")
+    except Exception as exc:                               # noqa: BLE001
+        print(f"  sectors: FAILED -- {exc}", file=sys.stderr)
+
     print("\nDone. Now run:  twbt web   and open the signal builder.")
     return 0
 
