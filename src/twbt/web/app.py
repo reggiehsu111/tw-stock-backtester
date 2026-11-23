@@ -22,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
-from . import builder, charts
+from . import builder, charts, futures
 
 RESULTS_DIR = Path(__file__).resolve().parents[3] / "data" / "results"
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -137,5 +137,6 @@ def create_app(fixture: bool = False) -> FastAPI:
     # registered last so its "/" is added after the named routes above; FastAPI
     # matches in definition order and these paths do not overlap, but keeping the
     # catch-all-looking route last avoids any future shadowing
+    futures.register(app, TEMPLATES, fixture=fixture)
     builder.register(app, TEMPLATES, fixture=fixture)
     return app

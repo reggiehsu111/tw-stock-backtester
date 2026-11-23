@@ -210,6 +210,50 @@ rather than leaving you to notice.
 At 62 bps a round trip, most daily-rebalanced cross-sectional signals in Taiwan are dead
 before they start. The builder is designed to show you that in seconds.
 
+## The futures tearsheet
+
+`/futures` is the same kind of tool for the single-instrument side: pick a strategy,
+turn the dials, get twelve panels back in about 150 ms. Three things live here that the
+cross-sectional page cannot have, because a futures contract has a settlement date and a
+cross-section does not.
+
+**Expiry, derived from the data.** A TAIFEX monthly contract settles on the third
+Wednesday — except when that Wednesday is a holiday. February 2026 settled on the **23rd**
+because Lunar New Year closed the 18th. Checking the rule against observed last-trading
+days, 34 of 41 contracts matched and the misses were that holiday plus contracts that
+have not expired yet. So settlement dates are read from the last session each contract
+actually traded, and the rule is used only for months with no data — the two are labelled
+separately so a study cannot quietly average exact dates with estimates.
+
+**Normalisation as a control, not a hardcoded choice.** `zscore`, `rank`, `robust`
+(median/IQR) and `minmax`, all trailing-only. The choice matters more than most people
+expect: on a skewed series a rank and a z-score correlate at **0.13**, and the bundled
+momentum strategy returns anywhere from +23 to +713 bps net depending purely on which one
+you pick — none of them significant. A panel shows all four side by side, because a
+result that exists under one method and not the others is telling you the method did the
+work.
+
+**Event studies**, on both pages. Three sources:
+
+| event | where from |
+|---|---|
+| settlement | derived from contract data, exact |
+| signal entries | the signal's own busiest entry sessions — needs no external data |
+| anything dated | a CSV you drop in `data/events/` |
+
+Each renders as a CAAR with its **t-statistic dashed on top and ±2 marked**, because a
+drifting CAAR looks like a finding and with twenty events usually is not.
+
+### Why there is no TSMC earnings file
+
+That is the obvious thing to overlay — TSMC is roughly a third of the TAIEX. Those dates
+are **not available from any public endpoint I could reach**: TWSE's open data publishes
+the latest quarter, the latest month and today's announcements, and MOPS does not serve a
+conference-date archive. TSMC's schedule is regular enough to approximate, and that
+approximation is deliberately not shipped — a date wrong by a day or two barely matters
+for a chart annotation and matters enormously for a one-day event study. Supply the real
+dates in `data/events/` and the study is exact.
+
 ## Layout
 
 ```

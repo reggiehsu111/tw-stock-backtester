@@ -235,3 +235,67 @@ def build(root=None, fixture: bool = False) -> pd.DataFrame:
 
     p.index.name = "date"
     return p
+
+
+# --------------------------------------------------------------------------- #
+# normalisation, as an explicit choice
+# --------------------------------------------------------------------------- #
+
+NORMALISATIONS = {
+    "zscore": "(x − trailing mean) / trailing sd",
+    "rank": "position within the trailing window, 0 to 1",
+    "robust": "(x − trailing median) / trailing IQR",
+    "minmax": "scaled to the trailing range, 0 to 1",
+    "none": "raw value, no normalisation",
+}
+
+
+def robust_zscore(s: pd.Series, window: int = DEFAULT_WINDOW,
+                  min_periods: int = MIN_WINDOW) -> pd.Series:
+    """Median and IQR instead of mean and sd.
+
+    Worth having as an option because one limit-up day can dominate a rolling
+    standard deviation for a year, which makes everything after it look calm.
+    The IQR does not care how far the outlier went.
+    """
+    base = s.shift(1).rolling(window, min_periods=min_periods)
+    med = base.median()
+    iqr = base.quantile(0.75) - base.quantile(0.25)
+    return (s - med) / iqr.where(iqr > 0)
+
+
+def trailing_minmax(s: pd.Series, window: int = DEFAULT_WINDOW,
+                    min_periods: int = MIN_WINDOW) -> pd.Series:
+    """Where x sits in the trailing range, 0 to 1. Bounded, and very outlier-sensitive."""
+    base = s.shift(1).rolling(window, min_periods=min_periods)
+    lo, hi = base.min(), base.max()
+    span = (hi - lo)
+    return (s - lo) / span.where(span > 0)
+
+
+def normalize(s: pd.Series, method: str = "zscore",
+              window: int = DEFAULT_WINDOW,
+              min_periods: int = MIN_WINDOW) -> pd.Series:
+    """Normalise a series by the named method, always trailing-only.
+
+    Exists so the choice is a parameter rather than a line of code buried in a
+    strategy. Which one you pick changes results more than most people expect --
+    a z-score and a rank disagree sharply whenever the distribution is skewed,
+    which for volume and turnover is always -- and a strategy that only works
+    under one of them is telling you something.
+
+    Every method here shifts before it looks back. There is no option that uses
+    the current observation to set the scale it is measured against.
+    """
+    if method not in NORMALISATIONS:
+        raise ValueError(f"unknown normalisation {method!r}; "
+                         f"choose from {sorted(NORMALISATIONS)}")
+    if method == "zscore":
+        return zscore(s, window, min_periods)
+    if method == "rank":
+        return trailing_rank(s, window, min_periods)
+    if method == "robust":
+        return robust_zscore(s, window, min_periods)
+    if method == "minmax":
+        return trailing_minmax(s, window, min_periods)
+    return s

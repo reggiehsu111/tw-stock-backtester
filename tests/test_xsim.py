@@ -266,3 +266,46 @@ def test_lag_sweep_and_buckets_produce_usable_series():
     bkt = xsim.bucket_pnl(sig, px.pct_change().fillna(0.0))
     assert list(bkt) == [f"Q{i}" for i in range(1, 6)]
     assert all(len(v) > 100 for v in bkt.values())
+
+
+def test_entry_dates_need_no_external_data():
+    """The signal supplies its own event axis, which is always available.
+
+    Two failure modes this pins. Counting "the number of names held rose" finds
+    almost nothing, because a cross-sectional book rotates names at a constant
+    count. Counting "any name opened" finds almost everything, because a
+    daily-rebalanced book opens something every session, and an event study
+    where every day is an event is the unconditional mean with extra steps.
+    """
+    px = _px()
+    r = xsim.simulate(_reversal(px), px)
+    d = xsim.entry_dates(r.weights, "long")
+    assert isinstance(d, pd.DatetimeIndex)
+    assert len(d) > 10, "too few events to study"
+    assert len(d) < 0.7 * len(r.weights), "nearly every session is an event"
+
+
+def test_entry_dates_pick_the_busier_sessions():
+    px = _px()
+    r = xsim.simulate(_reversal(px), px)
+    w = r.weights.clip(lower=0)
+    live = w != 0
+    opened = (live & ~live.shift(1, fill_value=False)).sum(axis=1)
+    d = xsim.entry_dates(r.weights, "long")
+    assert opened.loc[d].mean() >= opened.mean()
+
+
+def test_entry_dates_validates_the_quantile():
+    px = _px()
+    r = xsim.simulate(_reversal(px), px)
+    for bad in (0.0, 1.0, -0.5):
+        with pytest.raises(ValueError):
+            xsim.entry_dates(r.weights, "long", quantile=bad)
+
+
+def test_event_caar_runs_on_strategy_pnl():
+    px = _px()
+    r = xsim.simulate(_reversal(px), px)
+    out = xsim.event_caar(r.net, xsim.entry_dates(r.weights, "long"), 5, 5)
+    assert out["n"] > 5
+    assert len(out["caar"]) == 11

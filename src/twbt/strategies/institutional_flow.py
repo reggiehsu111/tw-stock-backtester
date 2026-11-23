@@ -53,6 +53,12 @@ class InstitutionalFlow(Strategy):
     dealer_z: float = 0.0         # dealers must be at least this short (z units)
     window: int = 250
     allow_short: bool = True
+    # How the raw lot counts are made comparable across years. A parameter
+    # rather than a hardcoded z-score, because the choice changes results more
+    # than most people expect: on a skewed series a rank and a z-score can
+    # correlate at 0.13. A signal that survives only one of them is telling you
+    # something about itself.
+    normalization: str = "zscore"
 
     def _inputs(self, p: pd.DataFrame) -> tuple[pd.Series, pd.Series] | None:
         """Trailing z-scores of the two positioning series, or None if absent.
@@ -66,8 +72,9 @@ class InstitutionalFlow(Strategy):
                    if c in p.columns and p[c].notna().any()), None)
         if fo is None or de is None:
             return None
-        return (panel_mod.zscore(p[fo], window=self.window),
-                panel_mod.zscore(p[de], window=self.window))
+        norm = (lambda c: panel_mod.normalize(p[c], self.normalization,
+                                              window=self.window))
+        return norm(fo), norm(de)
 
     def signal(self, p: pd.DataFrame) -> pd.Series:
         got = self._inputs(p)
@@ -78,11 +85,19 @@ class InstitutionalFlow(Strategy):
             return pd.Series(0.0, index=p.index)
 
         fz, dz = got
-        long_ = (fz >= self.entry_z) & (dz <= -self.dealer_z)
+        entry, dealer = self.thresholds()
+        if self.normalization in ("rank", "minmax"):
+            # bounded in [0, 1], so "extreme" is distance from the middle
+            lo_e, lo_d = 1.0 - entry, 1.0 - dealer
+            long_ = (fz >= entry) & (dz <= lo_d)
+            short = (fz <= lo_e) & (dz >= dealer)
+        else:
+            long_ = (fz >= entry) & (dz <= -dealer)
+            short = (fz <= -entry) & (dz >= dealer)
+
         out = pd.Series(0.0, index=p.index)
         out[long_] = 1.0
         if self.allow_short:
-            short = (fz <= -self.entry_z) & (dz >= self.dealer_z)
             out[short] = -1.0
         return out
 
@@ -90,14 +105,27 @@ class InstitutionalFlow(Strategy):
         return [{"entry_z": e, "dealer_z": d}
                 for e, d in product((0.75, 1.0, 1.5), (0.0, 0.5))]
 
+    def thresholds(self) -> tuple[float, float]:
+        """Entry levels in the units the chosen normalisation produces.
+
+        A rank lives in [0, 1] and a z-score does not, so a threshold of 1.0
+        means "one standard deviation" under one and "impossible" under the
+        other. Translating here keeps the same dial meaningful across methods.
+        """
+        if self.normalization in ("rank", "minmax"):
+            hi = 0.5 + min(0.49, self.entry_z / 6.0)
+            return hi, 0.5 + min(0.49, self.dealer_z / 6.0)
+        return self.entry_z, self.dealer_z
+
     @property
     def n_variants(self) -> int:
         """How many settings were searched — feeds the noise bar."""
         return len(self.grid())
 
     def describe(self) -> str:
-        return (f"Long when foreign positioning z >= {self.entry_z:+.2f} and dealer "
-                f"z <= {-self.dealer_z:+.2f}"
+        entry, dealer = self.thresholds()
+        return (f"Long when foreign positioning ({self.normalization}) "
+                f">= {entry:+.2f} and dealer <= {-dealer:+.2f}"
                 + (", short on the mirror condition" if self.allow_short else "")
                 + f". Trailing window {self.window}d, traded with a "
                 f"{self.publication_lag}-session publication lag.")

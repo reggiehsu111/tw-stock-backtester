@@ -505,3 +505,117 @@ def table_line(df: pd.DataFrame, x: str, y: str, title: str, ylab: str,
         return empty("—")
     s = pd.Series(df[y].to_numpy(), index=df[x].to_numpy())
     return _simple({label or y: s}, title, ylab, xlab, x_is_date=False)
+
+
+def caar_panel(res: dict, title: str, ylab: str = "cumulative bps",
+               xlab: str = "sessions from event") -> str:
+    """Cumulative average return around an event, with its t-stat beneath.
+
+    Both lines on purpose. A CAAR that drifts upward looks like a finding and
+    usually is not: with twenty events the standard error is wide enough that
+    most shapes are consistent with noise, and the only way to see that is to
+    plot the t alongside.
+    """
+    if not res or "caar" not in res:
+        return empty("—")
+    caar, t = res["caar"], res["t"]
+    xs = np.asarray(caar.index, dtype=float)
+
+    lo = float(min(caar.min(), 0.0))
+    hi = float(max(caar.max(), 0.0))
+    pad = (hi - lo) * 0.12 or 1.0
+    x = Scale(xs.min(), xs.max(), PAD_L, W - PAD_R)
+    y = Scale(lo - pad, hi + pad, H - PAD_B, PAD_T)
+
+    body = [_frame(x, y, xlab, ylab, list(np.linspace(xs.min(), xs.max(), 5)),
+                   _nice_ticks(lo - pad, hi + pad), lambda v: f"{v:+.0f}")]
+    body.append(f'<line class="zero" x1="{PAD_L}" y1="{y(0):.1f}" '
+                f'x2="{W - PAD_R}" y2="{y(0):.1f}"/>')
+    # the event itself
+    if xs.min() <= 0 <= xs.max():
+        body.append(f'<line class="marker" x1="{x(0):.1f}" y1="{PAD_T}" '
+                    f'x2="{x(0):.1f}" y2="{H - PAD_B}"/>')
+
+    body.append(f'<path class="line" stroke="{SERIES_COLOURS[0]}" '
+                f'd="{_path(xs, caar.to_numpy(float), x, y)}"/>')
+
+    # t-stat on its own scale, drawn thin so it reads as secondary
+    tv = t.to_numpy(float)
+    finite = tv[np.isfinite(tv)]
+    if len(finite):
+        tmax = max(3.0, float(np.nanmax(np.abs(finite))))
+        ty = Scale(-tmax, tmax, H - PAD_B, PAD_T)
+        body.append(f'<path class="line thin" stroke="{SERIES_COLOURS[1]}" '
+                    f'stroke-dasharray="3 3" d="{_path(xs, tv, x, ty)}"/>')
+        for lvl in (2.0, -2.0):
+            body.append(f'<line class="grid" x1="{PAD_L}" y1="{ty(lvl):.1f}" '
+                        f'x2="{W - PAD_R}" y2="{ty(lvl):.1f}" '
+                        f'stroke-dasharray="2 4"/>')
+
+    n = res.get("n", 0)
+    body.append(f'<rect class="swatch" x="{W - PAD_R - 150}" y="{PAD_T + 6}" '
+                f'fill="{SERIES_COLOURS[0]}"/>')
+    body.append(f'<text class="legend" x="{W - PAD_R - 136}" y="{PAD_T + 14}">'
+                f'CAAR <tspan class="num">n={n}</tspan></text>')
+    body.append(f'<rect class="swatch" x="{W - PAD_R - 150}" y="{PAD_T + 21}" '
+                f'fill="{SERIES_COLOURS[1]}"/>')
+    body.append(f'<text class="legend" x="{W - PAD_R - 136}" y="{PAD_T + 29}">'
+                f't <tspan class="num">(dashed, ±2 marked)</tspan></text>')
+    return _svg("".join(body), title)
+
+
+def profile(values: pd.Series, errors: pd.Series | None, title: str,
+            ylab: str, xlab: str = "") -> str:
+    """A bar per bucket, with an error bar when one is given.
+
+    For things like "return by sessions-to-expiry", where the question is
+    whether any bucket is distinguishable from zero rather than what the line
+    looks like.
+    """
+    v = pd.Series(values).dropna()
+    if v.empty:
+        return empty("—")
+    err = pd.Series(errors).reindex(v.index) if errors is not None else None
+
+    lo = float(min(v.min(), 0.0))
+    hi = float(max(v.max(), 0.0))
+    if err is not None and err.notna().any():
+        lo = min(lo, float((v - err).min()))
+        hi = max(hi, float((v + err).max()))
+    pad = (hi - lo) * 0.15 or 1.0
+    y = Scale(lo - pad, hi + pad, H - PAD_B, PAD_T)
+    n = len(v)
+    slot = (W - PAD_R - PAD_L) / max(n, 1)
+
+    body = []
+    for t in _nice_ticks(lo - pad, hi + pad):
+        body.append(f'<line class="grid" x1="{PAD_L}" y1="{y(t):.1f}" '
+                    f'x2="{W - PAD_R}" y2="{y(t):.1f}"/>')
+        body.append(f'<text class="tick ytick" x="{PAD_L - 8}" y="{y(t) + 3.5:.1f}">'
+                    f'{t:,.{_tick_decimals(_nice_ticks(lo - pad, hi + pad))}f}</text>')
+    body.append(f'<line class="zero" x1="{PAD_L}" y1="{y(0):.1f}" '
+                f'x2="{W - PAD_R}" y2="{y(0):.1f}"/>')
+
+    for i, (label, val) in enumerate(v.items()):
+        cx = PAD_L + slot * (i + 0.5)
+        top, bot = y(max(val, 0.0)), y(min(val, 0.0))
+        c = SERIES_COLOURS[0] if val >= 0 else SERIES_COLOURS[9]
+        body.append(f'<rect x="{cx - slot * 0.3:.1f}" y="{top:.1f}" '
+                    f'width="{slot * 0.6:.1f}" height="{max(bot - top, 0.8):.1f}" '
+                    f'fill="{c}" rx="2"/>')
+        if err is not None and np.isfinite(err.iloc[i]):
+            e = float(err.iloc[i])
+            body.append(f'<line class="axis" x1="{cx:.1f}" y1="{y(val - e):.1f}" '
+                        f'x2="{cx:.1f}" y2="{y(val + e):.1f}"/>')
+        body.append(f'<text class="tick xtick" x="{cx:.1f}" y="{H - PAD_B + 16}">'
+                    f'{_esc(label)}</text>')
+
+    body.append(f'<line class="axis" x1="{PAD_L}" y1="{H - PAD_B}" '
+                f'x2="{W - PAD_R}" y2="{H - PAD_B}"/>')
+    if ylab:
+        body.append(f'<text class="axlab" transform="translate(13,{H/2}) rotate(-90)">'
+                    f'{_esc(ylab)}</text>')
+    if xlab:
+        body.append(f'<text class="axlab" x="{(PAD_L + W - PAD_R)/2}" y="{H - 4}">'
+                    f'{_esc(xlab)}</text>')
+    return _svg("".join(body), title)

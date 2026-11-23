@@ -472,3 +472,52 @@ def factor_exposures(weights: pd.DataFrame, factors: dict) -> pd.DataFrame:
         r = Rank(mx.reindex_like(weights)) - 0.5
         out[name] = ((weights * r).sum(axis=1) / g).fillna(0.0)
     return pd.DataFrame(out)
+
+
+def entry_dates(weights: pd.DataFrame, side: str = "long",
+                quantile: float = 0.8, min_count: int = 1) -> pd.DatetimeIndex:
+    """Sessions where the book opened unusually many new positions on one side.
+
+    An event axis that needs no external data: the signal defines its own
+    events, and unlike earnings dates it is always available.
+
+    Two things this is NOT, both of which were tried first.
+
+    It is not "the number of names held rose". A cross-sectional book holds a
+    roughly constant count while rotating which names it holds, so that
+    definition found one event in six hundred sessions on a book that was
+    trading every day.
+
+    It is not "any name was opened" either. A daily-rebalanced book opens
+    something almost every session, and an event study where every day is an
+    event is just the unconditional mean with extra steps.
+
+    So: count names going from flat to held, and keep the sessions where that
+    count sits in the top ``quantile`` of its own distribution. Those are the
+    days the signal actually did something, which is the question an event
+    study is for.
+    """
+    w = weights.clip(lower=0) if side == "long" else weights.clip(upper=0)
+    live = w != 0
+    opened = (live & ~live.shift(1, fill_value=False)).sum(axis=1)
+    opened = opened[opened >= max(min_count, 1)]
+    if opened.empty:
+        return pd.DatetimeIndex([])
+    if not 0.0 < quantile < 1.0:
+        raise ValueError(f"quantile must be in (0, 1); got {quantile}")
+    thr = opened.quantile(quantile)
+    hits = opened[opened >= thr]
+    # a threshold that selects everything is not selecting
+    if len(hits) > 0.6 * len(weights):
+        hits = opened.nlargest(max(10, int(0.2 * len(opened))))
+    return pd.DatetimeIndex(sorted(hits.index))
+
+
+def event_caar(pnl: pd.Series, dates, before: int = 10, after: int = 10) -> dict:
+    """CAAR of a strategy's own P&L around a set of dates.
+
+    Applied to the P&L rather than to raw returns, so it answers "does this
+    strategy behave differently around these dates" instead of "does the market".
+    """
+    from .events import caar
+    return caar(pnl, dates, before, after)

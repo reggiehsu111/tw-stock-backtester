@@ -134,6 +134,12 @@
         {{ T('tradability') }}</label>
       <label class="check"><input type="checkbox" id="day_trade">
         {{ T('day_trade') }}</label>
+      <label>{{ T('event_set') }}
+        <select id="event_set" class="ctl">
+          <option value="">—</option>
+          {% for e in event_sets %}<option value="{{ e }}">{{ e }}</option>{% endfor %}
+        </select>
+      </label>
     </div>
 
     <h2>{{ T('presets') }}</h2>
@@ -205,6 +211,16 @@
       <figcaption>{{ CAP('top_long') }}</figcaption></figure>
     <figure class="fig"><div id="c_top_short"></div>
       <figcaption>{{ CAP('top_short') }}</figcaption></figure>
+  </div>
+
+  <h2>{{ T('events_h') }}</h2>
+  <div class="grid4">
+    <figure class="fig"><div id="c_entry_caar"></div>
+      <figcaption>{{ CAP('entry_caar') }}</figcaption></figure>
+    <figure class="fig"><div id="c_expiry_caar"></div>
+      <figcaption>{{ CAP('expiry_caar') }}</figcaption></figure>
+    <figure class="fig"><div id="c_event_caar"></div>
+      <figcaption>{{ CAP('event_caar') }}</figcaption></figure>
   </div>
 
   <h2>{{ T('stability') }}</h2>

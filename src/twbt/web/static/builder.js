@@ -349,6 +349,7 @@
   }
 
   COST_IDS.forEach(function (id) { $(id).addEventListener('input', refreshCost); });
+  if ($('event_set')) $('event_set').addEventListener('change', run);
   $('day_trade').addEventListener('change', refreshCost);
   $('resetcosts').addEventListener('click', function () {
     COST_IDS.forEach(function (id) {
@@ -375,7 +376,8 @@
         borrow_annual: rates.borrow_annual,
         tradability: $('tradability').checked,
         day_trade: $('day_trade').checked
-      }
+      },
+      event_set: ($('event_set') || {}).value || ''
     };
     if (mode === 'code') {
       if (!code.value.trim()) { setStatus(S.write_expr, true); return; }

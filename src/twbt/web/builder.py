@@ -22,7 +22,7 @@ import pandas as pd
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from .. import equity_panel, expr as ex, i18n, ops, pipeline as pl, xcosts, xsim
+from .. import equity_panel, events as ev, expr as ex, i18n, ops, pipeline as pl, xcosts, xsim
 from . import charts
 
 
@@ -46,6 +46,7 @@ class PanelState:
     universe: pd.DataFrame
     info: dict
     factors: dict
+    expiries: object = None
 
     @classmethod
     def load(cls, fixture: bool = False, universe_size: int = 300) -> PanelState:
@@ -58,9 +59,21 @@ class PanelState:
         # `px` is the conventional name for the price matrix in this vocabulary,
         # and every example uses it; alias rather than rename so both work
         sources["px"] = sources["close"]
+        # futures settlement moves the cash market too, so the equity book is
+        # worth studying around it; absent futures data this is simply None
+        expiries = None
+        try:
+            from .. import cache, panel as fpanel
+            fut = cache.load("futures_daily", **({"fixture": True} if fixture else {}))
+            cal = ev.expiry_dates(fut, sessions=mats["close"].index)
+            expiries = cal.trusted_dates
+        except Exception:                               # noqa: BLE001
+            pass
+
         return cls(mats=mats, sources=sources, universe=univ,
                    info=equity_panel.describe(mats, univ),
-                   factors=equity_panel.factor_matrices(mats))
+                   factors=equity_panel.factor_matrices(mats),
+                   expiries=expiries)
 
 
 def _rate(value, default: float, cap: float = 0.5) -> float:
@@ -151,6 +164,7 @@ def register(app, templates, fixture: bool = False) -> None:
             "all_ops": every,
             "sources": pl.SOURCES,
             "presets": pl.PRESETS,
+            "event_sets": ev.available_events(),
             "info": info,
             "gap_warning": gap_warning,
             "load_error": err,
@@ -311,6 +325,23 @@ def register(app, templates, fixture: bool = False) -> None:
         expo = attempt("exposures", lambda: xsim.factor_exposures(
             res.weights, p.factors), None)
 
+        # Event studies. The entry study needs nothing external: the signal
+        # supplies its own event dates, which is the only event axis that is
+        # always available.
+        entry_long = attempt("entry_caar", lambda: xsim.event_caar(
+            res.net, xsim.entry_dates(res.weights, "long"), 10, 10), {})
+        expiry_caar = attempt("expiry_caar", lambda: xsim.event_caar(
+            res.net, p.expiries, 10, 10), {}) if p.expiries is not None else {}
+
+        ev_name = str(body.get("event_set") or "")
+        user_caar, ev_rows = {}, 0
+        if ev_name:
+            def _ue():
+                tbl = ev.load_events(ev_name)
+                return xsim.event_caar(res.net, tbl["date"], 10, 10), len(tbl)
+            got = attempt("event_caar_user", _ue, ({}, 0))
+            user_caar, ev_rows = got if got else ({}, 0)
+
         return JSONResponse({
             "expression": shown,
             "elapsed_ms": int((time.time() - t0) * 1000),
@@ -416,6 +447,17 @@ def register(app, templates, fixture: bool = False) -> None:
                     hsweep, "hold", "sharpe", C("hold_sweep"), C("y_sharpe"),
                     C("x_hold"), C("y_sharpe"))
                     if hsweep is not None and len(hsweep) else charts.empty(why.get("hold_sweep", "—"))),
+                "entry_caar": (charts.caar_panel(
+                    entry_long, C("entry_caar"), C("y_cum_return"), C("x_event"))
+                    if entry_long else charts.empty(why.get("entry_caar", "—"))),
+                "expiry_caar": (charts.caar_panel(
+                    expiry_caar, C("expiry_caar"), C("y_cum_return"), C("x_event"))
+                    if expiry_caar else charts.empty(why.get("expiry_caar", "—"))),
+                "event_caar": (charts.caar_panel(
+                    user_caar, C("event_caar"), C("y_cum_return"), C("x_event"))
+                    if user_caar else charts.empty(
+                        why.get("event_caar_user",
+                                i18n.t(i18n.UI, "no_events", lang)))),
                 "exposures": (charts.groups(
                     {c: expo[c] for c in expo.columns}, title=C("exposures"),
                     ylab=C("y_share"))

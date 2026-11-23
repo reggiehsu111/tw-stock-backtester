@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Futures backtest{% endblock %}
+{% block subtitle %}{{ T('futures') }}{% endblock %}
+{% block content %}
+
+{% if load_error %}
+  <h2>{{ T('panel_unavailable') }}</h2>
+  <p class="note">{{ load_error }}</p>
+  <p><code>twbt fetch --start 2024-01-01</code></p>
+{% else %}
+
+<p class="note panelinfo">
+  {{ "{:,}".format(info.sessions) }} sessions, {{ info.start }} to {{ info.end }} ·
+  {{ info.expiries_observed }} settlements observed
+  {%- if info.expiries_estimated %}, {{ info.expiries_estimated }} estimated{% endif %}
+</p>
+
+<div class="builder">
+  <aside class="palette-col">
+    <h2>{{ T('settings') }}</h2>
+    <div class="settings">
+      <label>{{ T('strategy') }}
+        <select id="strategy" class="ctl">
+          {% for name, desc in strategies.items() %}
+            <option value="{{ name }}" title="{{ desc }}"
+              {% if name == defaults.strategy %}selected{% endif %}>{{ name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>{{ T('normalisation') }}
+        <select id="normalization" class="ctl">
+          {% for key, desc in normalisations.items() %}
+            <option value="{{ key }}" title="{{ desc }}"
+              {% if key == defaults.normalization %}selected{% endif %}>{{ key }} — {{ desc }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>{{ T('contract') }}
+        <select id="contract" class="ctl">
+          <option value="TXF" selected>TXF 臺股期貨</option>
+          <option value="MXF">MXF 小型臺指</option>
+          <option value="TMF">TMF 微型臺指</option>
+        </select>
+      </label>
+      <label>{{ T('exec_lag') }}
+        <select id="exec_shift" class="ctl">
+          <option value="1" selected>{{ T('lag_1') }}</option>
+          <option value="2">2 {{ T('lag_n') }}</option>
+        </select>
+      </label>
+      <div class="costgrid">
+        <label>entry threshold<span class="unit">z</span>
+          <input type="number" id="entry_z" class="ctl num" step="0.25" value="1.0"></label>
+        <label>lookback<span class="unit">d</span>
+          <input type="number" id="lookback" class="ctl num" step="5" value="20"></label>
+        <label>hold<span class="unit">d</span>
+          <input type="number" id="hold" class="ctl num" step="5" value="20"></label>
+        <label>{{ T('spread') }}<span class="unit">{{ T('bps') }}</span>
+          <input type="number" id="spread_bps" class="ctl num" step="0.1" placeholder="auto"></label>
+      </div>
+
+      <h2>{{ T('events_h') }}</h2>
+      <label>{{ T('event_set') }}
+        <select id="event_set" class="ctl">
+          <option value="">—</option>
+          {% for e in event_sets %}<option value="{{ e }}">{{ e }}</option>{% endfor %}
+        </select>
+      </label>
+      {% if not event_sets %}
+        <p class="hint">{{ T('no_events') }}</p>
+      {% endif %}
+    </div>
+    <div class="canvas-actions" style="margin-top:14px">
+      <button type="button" id="run" class="primary">{{ T('run') }}</button>
+    </div>
+  </aside>
+
+  <section class="canvas-col" style="grid-column: span 2">
+    <pre id="desc" class="expr"></pre>
+    <div id="status" class="status" hidden></div>
+    <h2 style="margin-top:14px">{{ T('verdict') }}</h2>
+    <ul class="verdict" id="verdict"></ul>
+  </section>
+</div>
+
+<div id="results" hidden>
+  <h2>{{ T('performance') }}</h2>
+  <div class="grid4">
+    <figure class="fig"><div id="c_equity"></div>
+      <figcaption>{{ CAP('equity') }}</figcaption></figure>
+    <figure class="fig"><div id="c_by_year"></div>
+      <figcaption>{{ CAP('by_year') }}</figcaption></figure>
+    <figure class="fig"><div id="c_decomp"></div>
+      <figcaption>{{ CAP('decomp') }}</figcaption></figure>
+    <figure class="fig"><div id="c_drawdown"></div>
+      <figcaption>{{ CAP('drawdown') }}</figcaption></figure>
+  </div>
+
+  <h2>{{ T('is_it_real') }}</h2>
+  <div class="grid4">
+    <figure class="fig"><div id="c_roll_sharpe"></div>
+      <figcaption>{{ CAP('roll_sharpe') }}</figcaption></figure>
+    <figure class="fig"><div id="c_cost_curve"></div>
+      <figcaption>{{ CAP('cost_sweep') }}</figcaption></figure>
+    <figure class="fig"><div id="c_norm_compare"></div>
+      <figcaption>{{ CAP('norm_compare') }}</figcaption></figure>
+    <figure class="fig"><div id="c_months"></div>
+      <figcaption>{{ CAP('months') }}</figcaption></figure>
+  </div>
+
+  <h2>{{ T('expiry_h') }} &amp; {{ T('events_h') }}</h2>
+  <div class="grid4">
+    <figure class="fig"><div id="c_expiry_profile"></div>
+      <figcaption>{{ CAP('dte_profile') }}</figcaption></figure>
+    <figure class="fig"><div id="c_expiry_caar"></div>
+      <figcaption>{{ CAP('expiry_caar') }}</figcaption></figure>
+    <figure class="fig"><div id="c_event_caar"></div>
+      <figcaption>{{ CAP('event_caar') }}</figcaption></figure>
+    <figure class="fig"><div id="c_weekdays"></div>
+      <figcaption>{{ CAP('weekdays') }}</figcaption></figure>
+  </div>
+
+  <h2>{{ T('statistics') }}</h2>
+  <div class="twocol">
+    <div class="tablewrap"><table><tbody id="stats"></tbody></table></div>
+    <div>
+      <div class="tablewrap"><table>
+        <thead><tr><th>{{ T('across_contracts') }}</th><th>net bps</th><th>t</th><th>SR</th></tr></thead>
+        <tbody id="consist"></tbody></table></div>
+      <div class="tablewrap" style="margin-top:12px"><table>
+        <thead><tr><th>{{ T('walk_forward') }}</th><th>params</th><th>n</th><th>net</th><th>t</th></tr></thead>
+        <tbody id="wf"></tbody></table></div>
+    </div>
+  </div>
+</div>
+
+<script id="cfg" type="application/json">{{ cfg|tojson }}</script>
+<script src="static/futures.js?v=1"></script>
+{% endif %}
+{% endblock %}

@@ -258,3 +258,50 @@ def test_a_full_pipeline_composes_to_a_neutral_scaled_book():
     g = sig.abs().sum(axis=1)
     assert g[g > 0].sub(1.0).abs().max() < 1e-9
     assert sig.sum(axis=1).abs().max() < 1e-9
+
+
+# --------------------------------------------------------------------------- #
+# normalisation is a choice, and the choices genuinely differ
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize("method", sorted(__import__("twbt").panel.NORMALISATIONS))
+def test_every_normalisation_is_trailing_only(method):
+    """The same adversarial test the panel functions get, via normalize()."""
+    from twbt import panel as pm
+
+    idx = pd.bdate_range("2023-01-02", periods=500)
+    rng = np.random.default_rng(4)
+    s = pd.Series(rng.normal(0, 100, 500), index=idx)
+    cut = 250
+
+    clean = pm.normalize(s, method, window=120, min_periods=60)
+    poisoned = s.copy()
+    poisoned.iloc[cut:] = rng.normal(5e6, 1e6, 500 - cut)
+    dirty = pm.normalize(poisoned, method, window=120, min_periods=60)
+
+    np.testing.assert_array_equal(
+        clean.iloc[:cut].fillna(0).to_numpy(),
+        dirty.iloc[:cut].fillna(0).to_numpy(),
+        err_msg=f"normalize({method!r}) leaked the future")
+
+
+def test_rank_and_zscore_disagree_on_skewed_data():
+    """If they agreed, offering the choice would be decoration.
+
+    On a lognormal series with one large outlier they correlate at about 0.13,
+    which is the whole argument for making the method a parameter.
+    """
+    from twbt import panel as pm
+
+    idx = pd.bdate_range("2023-01-02", periods=600)
+    s = pd.Series(np.random.default_rng(0).lognormal(0, 1, 600), index=idx)
+    s.iloc[300] = 500
+    z = pm.normalize(s, "zscore", window=250, min_periods=120)
+    r = pm.normalize(s, "rank", window=250, min_periods=120)
+    assert abs(z.corr(r)) < 0.5
+
+
+def test_unknown_normalisation_is_refused():
+    from twbt import panel as pm
+    with pytest.raises(ValueError, match="unknown normalisation"):
+        pm.normalize(pd.Series([1.0, 2.0]), "banana")

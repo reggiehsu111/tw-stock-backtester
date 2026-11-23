@@ -335,7 +335,8 @@ nav.tabs a:hover, nav.tabs a.on { color: var(--accent); }
     {% if fixture %}<span class="badge">fixture data</span>{% endif %}
     <nav class="tabs">
       <a href="/{% if lang %}?lang={{ lang }}{% endif %}">{% if lang == 'zh' %}訊號建構{% else %}signal builder{% endif %}</a>
-      <a href="/results">{% if lang == 'zh' %}期貨結果{% else %}futures results{% endif %}</a>
+      <a href="/futures{% if lang %}?lang={{ lang }}{% endif %}">{% if lang == "zh" %}期貨{% else %}futures{% endif %}</a>
+      <a href="/results">{% if lang == "zh" %}已儲存{% else %}saved{% endif %}</a>
       {% if langs %}<span class="langsw">
         {% for code, label in langs.items() %}
           <a class="{{ 'on' if code == lang else '' }}" href="?lang={{ code }}">{{ label }}</a>

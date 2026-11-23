@@ -39,17 +39,23 @@ class Momentum(Strategy):
     hold: int = 20
     entry_z: float = 1.0
     vol_scale: bool = False
+    normalization: str = "zscore"
 
     def signal(self, p: pd.DataFrame) -> pd.Series:
         if "close" not in p.columns:
             return pd.Series(0.0, index=p.index)
 
         trail = p["close"].pct_change(self.lookback) * 1e4
-        z = panel_mod.zscore(trail, window=250)
+        z = panel_mod.normalize(trail, self.normalization, window=250)
 
         raw = pd.Series(0.0, index=p.index)
-        raw[z >= self.entry_z] = 1.0
-        raw[z <= -self.entry_z] = -1.0
+        if self.normalization in ("rank", "minmax"):
+            hi = 0.5 + min(0.49, self.entry_z / 6.0)
+            raw[z >= hi] = 1.0
+            raw[z <= 1.0 - hi] = -1.0
+        else:
+            raw[z >= self.entry_z] = 1.0
+            raw[z <= -self.entry_z] = -1.0
 
         # hold the position for `hold` sessions after it fires, rather than
         # re-deciding daily; forward-fill is bounded so a single signal cannot
@@ -82,7 +88,8 @@ class Momentum(Strategy):
         return len(self.grid())
 
     def describe(self) -> str:
-        return (f"Long when the trailing {self.lookback}-session return has z >= "
-                f"{self.entry_z:+.2f}, short on the mirror, held {self.hold} sessions"
+        return (f"Long when the trailing {self.lookback}-session return "
+                f"({self.normalization}) is extreme at {self.entry_z:+.2f}, "
+                f"short on the mirror, held {self.hold} sessions"
                 + (", inverse-vol sized" if self.vol_scale else "")
                 + f". Traded with a {self.publication_lag}-session lag.")
