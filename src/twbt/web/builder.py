@@ -61,12 +61,6 @@ class PanelState:
                    info=equity_panel.describe(mats, univ))
 
 
-def _is_fail(text: str) -> bool:
-    """Does this verdict line report a failure, in either language?"""
-    return text.startswith(("FAILS", "SAME-CLOSE")) or text.startswith(
-        ("不及格", "敗在成本", "同收盤執行"))
-
-
 def _rate(value, default: float, cap: float = 0.5) -> float:
     """A cost rate from the form: a fraction, clamped, falling back to default.
 
@@ -277,8 +271,8 @@ def register(app, templates, fixture: bool = False) -> None:
         return JSONResponse({
             "expression": shown,
             "elapsed_ms": int((time.time() - t0) * 1000),
-            "verdict": [{"text": v, "fail": _is_fail(v)}
-                        for v in res.verdict(lang)],
+            "verdict": [{"text": v["text"], "fail": v["fail"]}
+                        for v in res.verdict_items(lang)],
             "stats": [
                 [i18n.t(i18n.STAT, k, lang), v] for k, v in (
                     ("net Sharpe", _fmt(s["sharpe"], 2, sign=True)),

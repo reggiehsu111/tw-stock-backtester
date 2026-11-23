@@ -158,46 +158,64 @@ class XSimResult:
             "days": int(len(self.net)), "avg_names": float(self.coverage.mean()),
         }
 
-    def verdict(self, lang: str = "en") -> list[str]:
-        """Plain-language findings, written to be unflattering where true.
+    # Verdict lines that report a failure. Kept as a set of KEYS rather than
+    # detected from the rendered text: a previous version matched on the prefix
+    # "FAILS", which meant any rewording -- or translating the sentence at all --
+    # silently stopped the line being highlighted as a failure.
+    FAIL_KEYS = frozenset({"same_close", "no_edge", "cost_kills"})
+
+    def verdict_items(self, lang: str = "en") -> list[dict]:
+        """Findings as {key, text, fail}, written to be unflattering where true.
 
         Takes a language because these sentences are the most-read output on the
         page, and a tool that reports its own failures only in English is less
         useful to the people who most need to read them.
         """
-        def T(key, **kw):
-            return i18n.t(i18n.VERDICT, key, lang).format(**kw)
+        def item(key, **kw):
+            return {"key": key,
+                    "text": i18n.t(i18n.VERDICT, key, lang).format(**kw),
+                    "fail": key in self.FAIL_KEYS}
 
-        out = [n if not isinstance(n, tuple) else T(n[0], **n[1])
-               for n in self.notes]
+        out = []
+        for n in self.notes:
+            if isinstance(n, tuple):
+                out.append(item(n[0], **n[1]))
+            else:                                   # a plain pre-rendered string
+                out.append({"key": None, "text": str(n), "fail": False})
 
         if self.exec_shift == 0:
-            out.append(T("same_close"))
+            out.append(item("same_close"))
 
         g, n = self.gross.mean(), self.net.mean()
         if g <= 0:
-            out.append(T("no_edge"))
+            out.append(item("no_edge"))
         elif n <= 0:
-            out.append(T("cost_kills", share=self.cost.mean() / g,
-                         turn=self.avg_turnover))
+            out.append(item("cost_kills", share=self.cost.mean() / g,
+                            turn=self.avg_turnover))
         else:
-            out.append(T("net_positive", sharpe=self.sharpe, t=self.t_stat,
-                         share=self.cost_share))
+            out.append(item("net_positive", sharpe=self.sharpe, t=self.t_stat,
+                            share=self.cost_share))
 
         yr = self.by_year()
         if len(yr) > 1:
             pos = int((yr["net_ret"] > 0).sum())
-            out.append(T("years", pos=pos, n=len(yr)))
+            out.append(item("years", pos=pos, n=len(yr)))
             if pos <= 1 and len(yr) >= 3:
-                out.append(T("one_year"))
+                out.append(item("one_year"))
 
         lng, sht = self.long_pnl.sum(), self.short_pnl.sum()
         if lng != 0 or sht != 0:
             dom = ("side_long" if abs(lng) > abs(sht) * 3
                    else ("side_short" if abs(sht) > abs(lng) * 3 else None))
             if dom:
-                out.append(T("one_side", side=T(dom), lng=lng, sht=sht))
+                out.append(item("one_side",
+                                side=i18n.t(i18n.VERDICT, dom, lang),
+                                lng=lng, sht=sht))
         return out
+
+    def verdict(self, lang: str = "en") -> list[str]:
+        """The same findings, as plain sentences."""
+        return [i["text"] for i in self.verdict_items(lang)]
 
 
 def simulate(sig: pd.DataFrame, px: pd.DataFrame,

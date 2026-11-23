@@ -73,3 +73,37 @@ def test_market_terms_stay_in_chinese_in_both_languages():
     """漲停, 證交稅 and friends are names of rules, not words to translate."""
     for term, key in (("證交稅", "tax_note"), ("漲停", "tradability")):
         assert term in i18n.UI[key]["en"], f"{term} should stay in the English text"
+
+
+def test_failure_lines_are_flagged_by_key_not_by_wording():
+    """Prefix-matching on "FAILS" breaks the moment anything is reworded.
+
+    It also cannot survive translation at all: a Chinese verdict never starts
+    with "FAILS", so under the old scheme every failure in 繁體中文 rendered as
+    an ordinary line.
+    """
+    import numpy as np
+    import pandas as pd
+
+    from twbt import ops, xsim
+
+    idx = pd.bdate_range("2023-01-02", periods=400)
+    cols = [f"{i:04d}" for i in range(1101, 1141)]
+    rng = np.random.default_rng(0)
+    px = pd.DataFrame(
+        100 * np.exp(np.cumsum(rng.normal(0, 0.02, (len(idx), len(cols))), axis=0)),
+        index=idx, columns=cols)
+    sig = ops.LongShortBalance(ops.Rank(-ops.InstSum(5, ops.Returns(px))))
+
+    res = xsim.simulate(sig, px)
+    en = res.verdict_items("en")
+    zh = res.verdict_items("zh")
+
+    assert [i["key"] for i in en] == [i["key"] for i in zh]
+    assert [i["fail"] for i in en] == [i["fail"] for i in zh], (
+        "a failure must be flagged identically in both languages")
+    assert any(i["fail"] for i in zh), "this signal should fail something"
+    # and the flag must not depend on the text starting with an English word
+    for i in zh:
+        if i["fail"]:
+            assert not i["text"].startswith("FAILS")
